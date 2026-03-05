@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Field, inputClass } from '../components/form'
+import { Section, Field, inputClass } from '../components/form'
 import { Toggle } from '../components/Toggle'
 import { GuardsSection, CRYPTO_GUARD_TYPES, SECURITIES_GUARD_TYPES } from '../components/guards'
 import { SDKSelector, PLATFORM_TYPE_OPTIONS } from '../components/SDKSelector'
@@ -10,9 +10,8 @@ import type { PlatformConfig, CcxtPlatformConfig, AlpacaPlatformConfig, AccountC
 // ==================== Panel state ====================
 
 type PanelState =
-  | { kind: 'account'; accountId: string; tab: 'account' | 'platform' }
-  | { kind: 'add-platform' }
-  | { kind: 'add-account' }
+  | { kind: 'edit'; accountId: string }
+  | { kind: 'add' }
   | null
 
 // ==================== Page ====================
@@ -21,9 +20,9 @@ export function TradingPage() {
   const tc = useTradingConfig()
   const [panel, setPanel] = useState<PanelState>(null)
 
-  // Close panel if the selected item was deleted
+  // Close panel if the selected account was deleted
   useEffect(() => {
-    if (panel?.kind === 'account') {
+    if (panel?.kind === 'edit') {
       if (!tc.accounts.some((a) => a.id === panel.accountId)) setPanel(null)
     }
   }, [tc.accounts, panel])
@@ -42,84 +41,74 @@ export function TradingPage() {
 
   const getPlatform = (platformId: string) => tc.platforms.find((p) => p.id === platformId)
 
+  const deleteAccountWithPlatform = async (accountId: string) => {
+    const account = tc.accounts.find((a) => a.id === accountId)
+    if (!account) return
+    const platformId = account.platformId
+    await tc.deleteAccount(accountId)
+    // Clean up platform if no other accounts reference it
+    const remaining = tc.accounts.filter((a) => a.id !== accountId && a.platformId === platformId)
+    if (remaining.length === 0) {
+      try { await tc.deletePlatform(platformId) } catch { /* best effort */ }
+    }
+    setPanel(null)
+  }
+
   return (
     <div className="flex flex-col flex-1 min-h-0">
       {/* Header */}
       <div className="shrink-0 border-b border-border">
         <div className="px-4 md:px-6 py-4">
           <h2 className="text-base font-semibold text-text">Trading</h2>
-          <p className="text-[12px] text-text-muted mt-1">Configure platforms and trading accounts.</p>
+          <p className="text-[12px] text-text-muted mt-1">Configure your trading accounts.</p>
         </div>
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 md:px-6 py-5">
-        <div className="max-w-[720px] space-y-6">
-          {/* Platforms bar */}
-          <PlatformsBar
-            platforms={tc.platforms}
-            onClickPlatform={(id) => {
-              // Find first account on this platform to open its panel
-              const acct = tc.accounts.find((a) => a.platformId === id)
-              if (acct) setPanel({ kind: 'account', accountId: acct.id, tab: 'platform' })
-            }}
-            onAdd={() => setPanel({ kind: 'add-platform' })}
-          />
-
-          {/* Accounts table */}
+        <div className="max-w-[720px] space-y-4">
           <AccountsTable
             accounts={tc.accounts}
             platforms={tc.platforms}
-            selectedId={panel?.kind === 'account' ? panel.accountId : null}
-            onSelect={(id) => setPanel({ kind: 'account', accountId: id, tab: 'account' })}
+            selectedId={panel?.kind === 'edit' ? panel.accountId : null}
+            onSelect={(id) => setPanel({ kind: 'edit', accountId: id })}
           />
 
-          {/* Add Account button */}
-          {tc.platforms.length > 0 && (
-            <button
-              onClick={() => setPanel({ kind: 'add-account' })}
-              className="text-[12px] text-text-muted hover:text-text transition-colors"
-            >
-              + Add Account
-            </button>
-          )}
+          <button
+            onClick={() => setPanel({ kind: 'add' })}
+            className="text-[12px] text-text-muted hover:text-text transition-colors"
+          >
+            + Add Account
+          </button>
         </div>
       </div>
 
       {/* Slide panel */}
       <SlidePanel open={panel !== null} onClose={() => setPanel(null)}>
-        {panel?.kind === 'account' && (() => {
+        {panel?.kind === 'edit' && (() => {
           const account = tc.accounts.find((a) => a.id === panel.accountId)
           const platform = account ? getPlatform(account.platformId) : undefined
           if (!account || !platform) return null
           return (
-            <PanelAccountView
+            <AccountEditPanel
               account={account}
               platform={platform}
-              tab={panel.tab}
-              onTabChange={(tab) => setPanel({ ...panel, tab })}
               onSaveAccount={tc.saveAccount}
-              onDeleteAccount={async (id) => { await tc.deleteAccount(id); setPanel(null) }}
               onSavePlatform={tc.savePlatform}
-              onDeletePlatform={async (id) => { await tc.deletePlatform(id); setPanel(null) }}
+              onDelete={() => deleteAccountWithPlatform(account.id)}
               onClose={() => setPanel(null)}
             />
           )
         })()}
 
-        {panel?.kind === 'add-platform' && (
-          <PanelAddPlatform
-            existingIds={tc.platforms.map((p) => p.id)}
-            onSave={async (p) => { await tc.savePlatform(p); setPanel(null) }}
-            onClose={() => setPanel(null)}
-          />
-        )}
-
-        {panel?.kind === 'add-account' && (
-          <PanelAddAccount
-            platforms={tc.platforms}
-            existingIds={tc.accounts.map((a) => a.id)}
-            onSave={async (a) => { await tc.saveAccount(a); setPanel(null) }}
+        {panel?.kind === 'add' && (
+          <AccountAddPanel
+            existingAccountIds={tc.accounts.map((a) => a.id)}
+            onSave={async (platform, account) => {
+              await tc.savePlatform(platform)
+              await tc.saveAccount(account)
+              setPanel(null)
+            }}
             onClose={() => setPanel(null)}
           />
         )}
@@ -144,41 +133,6 @@ function PageShell({ subtitle, children }: { subtitle: string; children?: React.
   )
 }
 
-// ==================== Platforms Bar ====================
-
-function PlatformsBar({ platforms, onClickPlatform, onAdd }: {
-  platforms: PlatformConfig[]
-  onClickPlatform: (id: string) => void
-  onAdd: () => void
-}) {
-  return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <span className="text-[12px] text-text-muted mr-1">Platforms</span>
-      {platforms.map((p) => {
-        const badge = p.type === 'ccxt'
-          ? { text: 'CC', color: 'text-accent bg-accent/10 border-accent/20' }
-          : { text: 'AL', color: 'text-green bg-green/10 border-green/20' }
-        return (
-          <button
-            key={p.id}
-            onClick={() => onClickPlatform(p.id)}
-            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[12px] hover:bg-bg-tertiary/50 transition-colors ${badge.color}`}
-          >
-            <span className="font-bold">{badge.text}</span>
-            <span className="text-text">{p.id}</span>
-          </button>
-        )
-      })}
-      <button
-        onClick={onAdd}
-        className="px-2.5 py-1 rounded-md border border-dashed border-border text-[12px] text-text-muted hover:text-text hover:border-text-muted/40 transition-colors"
-      >
-        + Add
-      </button>
-    </div>
-  )
-}
-
 // ==================== Accounts Table ====================
 
 function AccountsTable({ accounts, platforms, selectedId, onSelect }: {
@@ -189,18 +143,23 @@ function AccountsTable({ accounts, platforms, selectedId, onSelect }: {
 }) {
   const getPlatform = (platformId: string) => platforms.find((p) => p.id === platformId)
 
-  const getDetail = (account: AccountConfig) => {
+  const getConnectionLabel = (account: AccountConfig) => {
     const p = getPlatform(account.platformId)
-    if (!p) return '?'
-    if (p.type === 'ccxt') return p.exchange
+    if (!p) return '—'
+    if (p.type === 'ccxt') {
+      const parts = [p.exchange]
+      if (p.defaultMarketType === 'swap') parts.push('swap')
+      else parts.push('spot')
+      return parts.join(' \u00b7 ')
+    }
     return p.paper ? 'paper' : 'live'
   }
 
   if (accounts.length === 0) {
     return (
-      <div className="rounded-lg border border-border p-6 text-center">
+      <div className="rounded-lg border border-border p-8 text-center">
         <p className="text-[13px] text-text-muted">No accounts configured.</p>
-        <p className="text-[11px] text-text-muted/60 mt-1">Add a platform first, then create accounts.</p>
+        <p className="text-[11px] text-text-muted/60 mt-1">Click "+ Add Account" to connect your first trading account.</p>
       </div>
     )
   }
@@ -210,10 +169,10 @@ function AccountsTable({ accounts, platforms, selectedId, onSelect }: {
       <table className="w-full text-[13px]">
         <thead>
           <tr className="bg-bg-secondary/50 text-text-muted text-[11px] uppercase tracking-wider">
-            <th className="text-left px-4 py-2.5 font-medium">Account</th>
-            <th className="text-left px-4 py-2.5 font-medium">Platform</th>
-            <th className="text-left px-4 py-2.5 font-medium">Detail</th>
-            <th className="text-left px-4 py-2.5 font-medium">Guards</th>
+            <th className="text-left pl-4 pr-2 py-2.5 font-medium w-[40px]"></th>
+            <th className="text-left px-3 py-2.5 font-medium">Account</th>
+            <th className="text-left px-3 py-2.5 font-medium">Connection</th>
+            <th className="text-left px-3 py-2.5 font-medium">Guards</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -229,21 +188,18 @@ function AccountsTable({ accounts, platforms, selectedId, onSelect }: {
                 key={account.id}
                 onClick={() => onSelect(account.id)}
                 className={`cursor-pointer transition-colors ${
-                  isSelected
-                    ? 'bg-accent/5'
-                    : 'hover:bg-bg-tertiary/30'
+                  isSelected ? 'bg-accent/5' : 'hover:bg-bg-tertiary/30'
                 }`}
               >
-                <td className="px-4 py-2.5 font-medium text-text">{account.id}</td>
-                <td className="px-4 py-2.5">
+                <td className="pl-4 pr-2 py-2.5">
                   <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${badge.color}`}>
                     {badge.text}
                   </span>
-                  <span className="text-text-muted ml-1.5">{p?.type === 'ccxt' ? 'CCXT' : 'Alpaca'}</span>
                 </td>
-                <td className="px-4 py-2.5 text-text-muted">{getDetail(account)}</td>
-                <td className="px-4 py-2.5 text-text-muted">
-                  {account.guards.length > 0 ? `${account.guards.length} guard${account.guards.length > 1 ? 's' : ''}` : '—'}
+                <td className="px-3 py-2.5 font-medium text-text">{account.id}</td>
+                <td className="px-3 py-2.5 text-text-muted">{getConnectionLabel(account)}</td>
+                <td className="px-3 py-2.5 text-text-muted">
+                  {account.guards.length > 0 ? account.guards.length : '—'}
                 </td>
               </tr>
             )
@@ -263,14 +219,12 @@ function SlidePanel({ open, onClose, children }: {
 }) {
   return (
     <>
-      {/* Backdrop */}
       {open && (
         <div
           className="fixed inset-0 bg-black/30 z-40 transition-opacity"
           onClick={onClose}
         />
       )}
-      {/* Panel */}
       <div
         className={`fixed top-0 right-0 h-full w-[400px] max-w-[90vw] bg-bg border-l border-border z-50 flex flex-col
           transition-transform duration-200 ease-out
@@ -283,437 +237,262 @@ function SlidePanel({ open, onClose, children }: {
   )
 }
 
-// ==================== Panel: Account View (tabs) ====================
+// ==================== Panel Header ====================
 
-interface PanelAccountViewProps {
-  account: AccountConfig
-  platform: PlatformConfig
-  tab: 'account' | 'platform'
-  onTabChange: (tab: 'account' | 'platform') => void
-  onSaveAccount: (a: AccountConfig) => Promise<void>
-  onDeleteAccount: (id: string) => Promise<void>
-  onSavePlatform: (p: PlatformConfig) => Promise<void>
-  onDeletePlatform: (id: string) => Promise<void>
-  onClose: () => void
+function PanelHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border">
+      <h3 className="text-[14px] font-semibold text-text truncate">{title}</h3>
+      <button onClick={onClose} className="text-text-muted hover:text-text p-1 transition-colors">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M18 6L6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  )
 }
 
-function PanelAccountView({
-  account, platform, tab, onTabChange,
-  onSaveAccount, onDeleteAccount,
-  onSavePlatform, onDeletePlatform,
-  onClose,
-}: PanelAccountViewProps) {
+// ==================== Account Edit Panel ====================
+
+function AccountEditPanel({ account, platform, onSaveAccount, onSavePlatform, onDelete, onClose }: {
+  account: AccountConfig
+  platform: PlatformConfig
+  onSaveAccount: (a: AccountConfig) => Promise<void>
+  onSavePlatform: (p: PlatformConfig) => Promise<void>
+  onDelete: () => Promise<void>
+  onClose: () => void
+}) {
+  const [accountDraft, setAccountDraft] = useState(account)
+  const [platformDraft, setPlatformDraft] = useState(platform)
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+  const [guardsOpen, setGuardsOpen] = useState(false)
+
+  // Sync drafts when props change externally
+  useEffect(() => { setAccountDraft(account) }, [account])
+  useEffect(() => { setPlatformDraft(platform) }, [platform])
+
+  const dirty =
+    JSON.stringify(accountDraft) !== JSON.stringify(account) ||
+    JSON.stringify(platformDraft) !== JSON.stringify(platform)
+
+  const patchAccount = (field: keyof AccountConfig, value: unknown) => {
+    setAccountDraft((d) => ({ ...d, [field]: value }))
+  }
+
+  const patchPlatform = (field: string, value: unknown) => {
+    setPlatformDraft((d) => ({ ...d, [field]: value }) as PlatformConfig)
+  }
+
+  const handleSave = async () => {
+    setSaving(true); setMsg('')
+    try {
+      // Save platform first, then account
+      if (JSON.stringify(platformDraft) !== JSON.stringify(platform)) {
+        await onSavePlatform(platformDraft)
+      }
+      if (JSON.stringify(accountDraft) !== JSON.stringify(account)) {
+        await onSaveAccount(accountDraft)
+      }
+      setMsg('Saved')
+      setTimeout(() => setMsg(''), 2000)
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const guardTypes = platform.type === 'ccxt' ? CRYPTO_GUARD_TYPES : SECURITIES_GUARD_TYPES
+
   return (
     <>
-      {/* Header */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border">
-        <h3 className="text-[14px] font-semibold text-text truncate">{account.id}</h3>
-        <button onClick={onClose} className="text-text-muted hover:text-text p-1 transition-colors">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
+      <PanelHeader title={account.id} onClose={onClose} />
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+        {/* Connection section */}
+        <Section title="Connection">
+          <div className="mb-3">
+            <span className="text-[12px] text-text-muted">Type</span>
+            <span className="ml-2 text-[12px] font-medium text-text">
+              {platform.type === 'ccxt' ? 'CCXT' : 'Alpaca'}
+            </span>
+          </div>
+          {platformDraft.type === 'ccxt' ? (
+            <CcxtConnectionFields draft={platformDraft} onPatch={patchPlatform} />
+          ) : (
+            <AlpacaConnectionFields draft={platformDraft} onPatch={patchPlatform} />
+          )}
+        </Section>
 
-      {/* Tabs */}
-      <div className="shrink-0 flex border-b border-border">
-        {(['account', 'platform'] as const).map((t) => (
+        {/* Credentials section */}
+        <Section title="Credentials">
+          <Field label="API Key">
+            <input
+              className={inputClass}
+              type="password"
+              value={accountDraft.apiKey || ''}
+              onChange={(e) => patchAccount('apiKey', e.target.value)}
+              placeholder="Not configured"
+            />
+          </Field>
+          <Field label={platform.type === 'alpaca' ? 'Secret Key' : 'API Secret'}>
+            <input
+              className={inputClass}
+              type="password"
+              value={accountDraft.apiSecret || ''}
+              onChange={(e) => patchAccount('apiSecret', e.target.value)}
+              placeholder="Not configured"
+            />
+          </Field>
+          {platform.type === 'ccxt' && (
+            <Field label="Password (optional)">
+              <input
+                className={inputClass}
+                type="password"
+                value={accountDraft.password || ''}
+                onChange={(e) => patchAccount('password', e.target.value)}
+                placeholder="Required by some exchanges (e.g. OKX)"
+              />
+            </Field>
+          )}
+        </Section>
+
+        {/* Guards section */}
+        <div>
           <button
-            key={t}
-            onClick={() => onTabChange(t)}
-            className={`flex-1 py-2 text-[12px] font-medium transition-colors ${
-              tab === t
-                ? 'text-text border-b-2 border-accent'
-                : 'text-text-muted hover:text-text'
-            }`}
+            onClick={() => setGuardsOpen(!guardsOpen)}
+            className="flex items-center gap-1.5 text-[13px] font-semibold text-text-muted uppercase tracking-wide"
           >
-            {t === 'account' ? 'Account' : 'Platform'}
+            <svg
+              width="12" height="12" viewBox="0 0 24 24"
+              fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              className={`transition-transform duration-150 ${guardsOpen ? 'rotate-90' : ''}`}
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+            Guards ({accountDraft.guards.length})
           </button>
-        ))}
-      </div>
+          {guardsOpen && (
+            <div className="mt-3">
+              <GuardsSection
+                guards={accountDraft.guards}
+                guardTypes={guardTypes}
+                description="Guards validate operations before execution. Order matters."
+                onChange={(guards) => patchAccount('guards', guards)}
+                onChangeImmediate={(guards) => patchAccount('guards', guards)}
+              />
+            </div>
+          )}
+        </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-4 py-4">
-        {tab === 'account' ? (
-          <PanelAccountTab
-            account={account}
-            platformType={platform.type}
-            onSave={onSaveAccount}
-            onDelete={onDeleteAccount}
-          />
-        ) : (
-          <PanelPlatformTab
-            platform={platform}
-            onSave={onSavePlatform}
-            onDelete={onDeletePlatform}
-          />
-        )}
+        {/* Actions */}
+        <div className="border-t border-border pt-4 space-y-3">
+          <div className="flex items-center gap-3">
+            {dirty && (
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-3 py-1.5 text-[13px] font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
+              >
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+            )}
+            {msg && <span className="text-[12px] text-text-muted">{msg}</span>}
+          </div>
+          <ReconnectButton accountId={account.id} />
+        </div>
+
+        {/* Delete */}
+        <div className="border-t border-border pt-3">
+          <DeleteButton label="Delete Account" onConfirm={onDelete} />
+        </div>
       </div>
     </>
   )
 }
 
-// ==================== Panel: Account Tab ====================
+// ==================== Connection Fields (CCXT) ====================
 
-function PanelAccountTab({ account, platformType, onSave, onDelete }: {
-  account: AccountConfig
-  platformType: 'ccxt' | 'alpaca'
-  onSave: (a: AccountConfig) => Promise<void>
-  onDelete: (id: string) => Promise<void>
-}) {
-  const [draft, setDraft] = useState(account)
-  const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState('')
-  const [guardsOpen, setGuardsOpen] = useState(false)
-  const dirty = JSON.stringify(draft) !== JSON.stringify(account)
-
-  // Sync draft when account changes externally
-  useEffect(() => { setDraft(account) }, [account])
-
-  const patchField = (field: keyof AccountConfig, value: unknown) => {
-    setDraft((d) => ({ ...d, [field]: value }))
-  }
-
-  const handleSave = async () => {
-    setSaving(true); setMsg('')
-    try {
-      await onSave(draft)
-      setMsg('Saved')
-      setTimeout(() => setMsg(''), 2000)
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Save failed')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const guardTypes = platformType === 'ccxt' ? CRYPTO_GUARD_TYPES : SECURITIES_GUARD_TYPES
-
-  return (
-    <div className="space-y-4">
-      {/* Credentials */}
-      <Field label="API Key">
-        <input
-          className={inputClass}
-          type="password"
-          value={draft.apiKey || ''}
-          onChange={(e) => patchField('apiKey', e.target.value)}
-          placeholder="Not configured"
-        />
-      </Field>
-      <Field label={platformType === 'alpaca' ? 'Secret Key' : 'API Secret'}>
-        <input
-          className={inputClass}
-          type="password"
-          value={draft.apiSecret || ''}
-          onChange={(e) => patchField('apiSecret', e.target.value)}
-          placeholder="Not configured"
-        />
-      </Field>
-      {platformType === 'ccxt' && (
-        <Field label="Password (optional)">
-          <input
-            className={inputClass}
-            type="password"
-            value={draft.password || ''}
-            onChange={(e) => patchField('password', e.target.value)}
-            placeholder="Required by some exchanges (e.g. OKX)"
-          />
-        </Field>
-      )}
-
-      {/* Guards */}
-      <div className="border-t border-border pt-3">
-        <button
-          onClick={() => setGuardsOpen(!guardsOpen)}
-          className="flex items-center gap-1.5 text-[12px] text-text-muted hover:text-text transition-colors"
-        >
-          <svg
-            width="12" height="12" viewBox="0 0 24 24"
-            fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            className={`transition-transform duration-150 ${guardsOpen ? 'rotate-90' : ''}`}
-          >
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
-          Guards ({draft.guards.length})
-        </button>
-        {guardsOpen && (
-          <div className="mt-2">
-            <GuardsSection
-              guards={draft.guards}
-              guardTypes={guardTypes}
-              description="Guards validate operations before execution. Order matters."
-              onChange={(guards) => patchField('guards', guards)}
-              onChangeImmediate={(guards) => patchField('guards', guards)}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* Save + Reconnect */}
-      <div className="border-t border-border pt-3 space-y-2">
-        <div className="flex items-center gap-3">
-          {dirty && (
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="px-3 py-1.5 text-[13px] font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
-            >
-              {saving ? 'Saving...' : 'Save'}
-            </button>
-          )}
-          {msg && <span className="text-[12px] text-text-muted">{msg}</span>}
-        </div>
-        <ReconnectButton accountId={account.id} />
-      </div>
-
-      {/* Delete */}
-      <div className="border-t border-border pt-3">
-        <DeleteButton label="Delete Account" onConfirm={() => onDelete(account.id)} />
-      </div>
-    </div>
-  )
-}
-
-// ==================== Panel: Platform Tab ====================
-
-function PanelPlatformTab({ platform, onSave, onDelete }: {
-  platform: PlatformConfig
-  onSave: (p: PlatformConfig) => Promise<void>
-  onDelete: (id: string) => Promise<void>
+function CcxtConnectionFields({ draft, onPatch }: {
+  draft: CcxtPlatformConfig
+  onPatch: (field: string, value: unknown) => void
 }) {
   return (
-    <div className="space-y-4">
-      <p className="text-[11px] text-text-muted">
-        Platform: <span className="text-text font-medium">{platform.id}</span>
-      </p>
-
-      {platform.type === 'ccxt' ? (
-        <CcxtPlatformFields platform={platform} onSave={onSave} />
-      ) : (
-        <AlpacaPlatformFields platform={platform} onSave={onSave} />
-      )}
-
-      <div className="border-t border-border pt-3">
-        <DeleteButton label="Delete Platform" onConfirm={() => onDelete(platform.id)} />
-      </div>
-    </div>
-  )
-}
-
-// ==================== CCXT Platform Fields ====================
-
-function CcxtPlatformFields({ platform, onSave }: { platform: CcxtPlatformConfig; onSave: (p: PlatformConfig) => Promise<void> }) {
-  const [draft, setDraft] = useState(platform)
-  const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState('')
-  const dirty = JSON.stringify(draft) !== JSON.stringify(platform)
-
-  useEffect(() => { setDraft(platform) }, [platform])
-
-  const patch = (field: string, value: unknown) => {
-    setDraft((d) => ({ ...d, [field]: value }))
-  }
-
-  const handleSave = async () => {
-    setSaving(true); setMsg('')
-    try {
-      await onSave(draft)
-      setMsg('Saved')
-      setTimeout(() => setMsg(''), 2000)
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Save failed')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="space-y-3">
+    <>
       <Field label="Exchange">
-        <input className={inputClass} value={draft.exchange} onChange={(e) => patch('exchange', e.target.value.trim())} placeholder="binance" />
+        <input className={inputClass} value={draft.exchange} onChange={(e) => onPatch('exchange', e.target.value.trim())} placeholder="binance" />
       </Field>
       <Field label="Market Type">
-        <select className={inputClass} value={draft.defaultMarketType} onChange={(e) => patch('defaultMarketType', e.target.value)}>
+        <select className={inputClass} value={draft.defaultMarketType} onChange={(e) => onPatch('defaultMarketType', e.target.value)}>
           <option value="swap">Perpetual Swap</option>
           <option value="spot">Spot</option>
         </select>
       </Field>
       <div className="space-y-2">
         <label className="flex items-center gap-2.5 cursor-pointer">
-          <Toggle checked={draft.sandbox} onChange={(v) => patch('sandbox', v)} />
+          <Toggle checked={draft.sandbox} onChange={(v) => onPatch('sandbox', v)} />
           <span className="text-[13px] text-text">Sandbox Mode</span>
         </label>
         <label className="flex items-center gap-2.5 cursor-pointer">
-          <Toggle checked={draft.demoTrading} onChange={(v) => patch('demoTrading', v)} />
+          <Toggle checked={draft.demoTrading} onChange={(v) => onPatch('demoTrading', v)} />
           <span className="text-[13px] text-text">Demo Trading</span>
         </label>
-      </div>
-      {dirty && (
-        <div className="flex items-center gap-3">
-          <button onClick={handleSave} disabled={saving} className="px-3 py-1.5 text-[13px] font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors">
-            {saving ? 'Saving...' : 'Save Platform'}
-          </button>
-          {msg && <span className="text-[12px] text-text-muted">{msg}</span>}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ==================== Alpaca Platform Fields ====================
-
-function AlpacaPlatformFields({ platform, onSave }: { platform: AlpacaPlatformConfig; onSave: (p: PlatformConfig) => Promise<void> }) {
-  const [draft, setDraft] = useState(platform)
-  const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState('')
-  const dirty = JSON.stringify(draft) !== JSON.stringify(platform)
-
-  useEffect(() => { setDraft(platform) }, [platform])
-
-  const handleSave = async () => {
-    setSaving(true); setMsg('')
-    try {
-      await onSave(draft)
-      setMsg('Saved')
-      setTimeout(() => setMsg(''), 2000)
-    } catch (err) {
-      setMsg(err instanceof Error ? err.message : 'Save failed')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="space-y-3">
-      <label className="flex items-center gap-2.5 cursor-pointer">
-        <Toggle checked={draft.paper} onChange={(v) => setDraft((d) => ({ ...d, paper: v }))} />
-        <span className="text-[13px] text-text">Paper Trading</span>
-      </label>
-      <p className="text-[11px] text-text-muted/60">When enabled, orders are routed to Alpaca's paper trading environment.</p>
-      {dirty && (
-        <div className="flex items-center gap-3">
-          <button onClick={handleSave} disabled={saving} className="px-3 py-1.5 text-[13px] font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors">
-            {saving ? 'Saving...' : 'Save Platform'}
-          </button>
-          {msg && <span className="text-[12px] text-text-muted">{msg}</span>}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ==================== Panel: Add Platform ====================
-
-function PanelAddPlatform({ existingIds, onSave, onClose }: {
-  existingIds: string[]
-  onSave: (p: PlatformConfig) => Promise<void>
-  onClose: () => void
-}) {
-  const [type, setType] = useState<'ccxt' | 'alpaca' | null>(null)
-  const [id, setId] = useState('')
-  const [exchange, setExchange] = useState('binance')
-  const [paper, setPaper] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  const handleSave = async () => {
-    if (!type) return
-    const finalId = id.trim() || (type === 'ccxt' ? `${exchange}-platform` : 'alpaca-platform')
-    if (existingIds.includes(finalId)) {
-      setError(`Platform "${finalId}" already exists`)
-      return
-    }
-    setSaving(true); setError('')
-    try {
-      if (type === 'ccxt') {
-        await onSave({ id: finalId, type: 'ccxt', exchange, sandbox: false, demoTrading: false, defaultMarketType: 'swap' })
-      } else {
-        await onSave({ id: finalId, type: 'alpaca', paper })
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create platform')
-      setSaving(false)
-    }
-  }
-
-  return (
-    <>
-      <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border">
-        <h3 className="text-[14px] font-semibold text-text">New Platform</h3>
-        <button onClick={onClose} className="text-text-muted hover:text-text p-1 transition-colors">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {!type ? (
-          <>
-            <p className="text-[12px] text-text-muted">Choose a platform type.</p>
-            <SDKSelector options={PLATFORM_TYPE_OPTIONS} selected="" onSelect={(sel) => setType(sel as 'ccxt' | 'alpaca')} />
-          </>
-        ) : (
-          <div className="space-y-3">
-            <Field label="Platform ID">
-              <input className={inputClass} value={id} onChange={(e) => setId(e.target.value.trim())} placeholder={type === 'ccxt' ? `${exchange}-platform` : 'alpaca-platform'} />
-            </Field>
-            {type === 'ccxt' && (
-              <Field label="Exchange">
-                <input className={inputClass} value={exchange} onChange={(e) => setExchange(e.target.value.trim())} placeholder="binance" />
-              </Field>
-            )}
-            {type === 'alpaca' && (
-              <label className="flex items-center gap-2.5 cursor-pointer">
-                <Toggle checked={paper} onChange={setPaper} />
-                <span className="text-[13px] text-text">Paper Trading</span>
-              </label>
-            )}
-            {error && <p className="text-[12px] text-red">{error}</p>}
-            <div className="flex items-center gap-3">
-              <button onClick={handleSave} disabled={saving} className="px-3 py-1.5 text-[13px] font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors">
-                {saving ? 'Creating...' : 'Create Platform'}
-              </button>
-              <button onClick={() => setType(null)} className="px-3 py-1.5 text-[13px] font-medium rounded-md border border-border hover:bg-bg-tertiary transition-colors">
-                Back
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     </>
   )
 }
 
-// ==================== Panel: Add Account ====================
+// ==================== Connection Fields (Alpaca) ====================
 
-function PanelAddAccount({ platforms, existingIds, onSave, onClose }: {
-  platforms: PlatformConfig[]
-  existingIds: string[]
-  onSave: (a: AccountConfig) => Promise<void>
+function AlpacaConnectionFields({ draft, onPatch }: {
+  draft: AlpacaPlatformConfig
+  onPatch: (field: string, value: unknown) => void
+}) {
+  return (
+    <>
+      <label className="flex items-center gap-2.5 cursor-pointer">
+        <Toggle checked={draft.paper} onChange={(v) => onPatch('paper', v)} />
+        <span className="text-[13px] text-text">Paper Trading</span>
+      </label>
+      <p className="text-[11px] text-text-muted/60 mt-1">When enabled, orders are routed to Alpaca's paper trading environment.</p>
+    </>
+  )
+}
+
+// ==================== Account Add Panel ====================
+
+function AccountAddPanel({ existingAccountIds, onSave, onClose }: {
+  existingAccountIds: string[]
+  onSave: (platform: PlatformConfig, account: AccountConfig) => Promise<void>
   onClose: () => void
 }) {
-  const [platformId, setPlatformId] = useState(platforms[0]?.id || '')
+  const [type, setType] = useState<'ccxt' | 'alpaca' | null>(null)
   const [id, setId] = useState('')
+  const [exchange, setExchange] = useState('binance')
+  const [marketType, setMarketType] = useState<'swap' | 'spot'>('swap')
+  const [paper, setPaper] = useState(true)
   const [apiKey, setApiKey] = useState('')
   const [apiSecret, setApiSecret] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const platform = platforms.find((p) => p.id === platformId)
-  const defaultId = platform?.type === 'ccxt'
-    ? `${platformId.replace('-platform', '')}-main`
-    : 'alpaca-paper'
+  const defaultId = type === 'ccxt' ? `${exchange}-main` : 'alpaca-paper'
+  const finalId = id.trim() || defaultId
+  const platformId = `${finalId}-platform`
 
   const handleSave = async () => {
-    const finalId = id.trim() || defaultId
-    if (existingIds.includes(finalId)) {
+    if (!type) return
+    if (existingAccountIds.includes(finalId)) {
       setError(`Account "${finalId}" already exists`)
       return
     }
     setSaving(true); setError('')
     try {
-      await onSave({ id: finalId, platformId, apiKey, apiSecret, guards: [] })
+      const platform: PlatformConfig = type === 'ccxt'
+        ? { id: platformId, type: 'ccxt', exchange, sandbox: false, demoTrading: false, defaultMarketType: marketType }
+        : { id: platformId, type: 'alpaca', paper }
+      const account: AccountConfig = { id: finalId, platformId, apiKey, apiSecret, guards: [] }
+      await onSave(platform, account)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create account')
       setSaving(false)
@@ -722,39 +501,73 @@ function PanelAddAccount({ platforms, existingIds, onSave, onClose }: {
 
   return (
     <>
-      <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-border">
-        <h3 className="text-[14px] font-semibold text-text">New Account</h3>
-        <button onClick={onClose} className="text-text-muted hover:text-text p-1 transition-colors">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-        <Field label="Platform">
-          <select className={inputClass} value={platformId} onChange={(e) => setPlatformId(e.target.value)}>
-            {platforms.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.type === 'ccxt' ? `CCXT — ${p.id}` : `Alpaca — ${p.id}`}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Account ID">
-          <input className={inputClass} value={id} onChange={(e) => setId(e.target.value.trim())} placeholder={defaultId} />
-        </Field>
-        <Field label="API Key">
-          <input className={inputClass} type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Not configured" />
-        </Field>
-        <Field label={platform?.type === 'alpaca' ? 'Secret Key' : 'API Secret'}>
-          <input className={inputClass} type="password" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} placeholder="Not configured" />
-        </Field>
-        {error && <p className="text-[12px] text-red">{error}</p>}
-        <div className="flex items-center gap-3">
-          <button onClick={handleSave} disabled={saving} className="px-3 py-1.5 text-[13px] font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors">
-            {saving ? 'Creating...' : 'Create Account'}
-          </button>
-        </div>
+      <PanelHeader title="New Account" onClose={onClose} />
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+        {!type ? (
+          <>
+            <p className="text-[12px] text-text-muted">Choose a connection type.</p>
+            <SDKSelector options={PLATFORM_TYPE_OPTIONS} selected="" onSelect={(sel) => setType(sel as 'ccxt' | 'alpaca')} />
+          </>
+        ) : (
+          <>
+            {/* Connection settings */}
+            <Section title="Connection">
+              {type === 'ccxt' && (
+                <>
+                  <Field label="Exchange">
+                    <input className={inputClass} value={exchange} onChange={(e) => setExchange(e.target.value.trim())} placeholder="binance" />
+                  </Field>
+                  <Field label="Market Type">
+                    <select className={inputClass} value={marketType} onChange={(e) => setMarketType(e.target.value as 'swap' | 'spot')}>
+                      <option value="swap">Perpetual Swap</option>
+                      <option value="spot">Spot</option>
+                    </select>
+                  </Field>
+                </>
+              )}
+              {type === 'alpaca' && (
+                <>
+                  <label className="flex items-center gap-2.5 cursor-pointer">
+                    <Toggle checked={paper} onChange={setPaper} />
+                    <span className="text-[13px] text-text">Paper Trading</span>
+                  </label>
+                  <p className="text-[11px] text-text-muted/60 mt-1">When enabled, orders are routed to Alpaca's paper trading environment.</p>
+                </>
+              )}
+            </Section>
+
+            {/* Credentials */}
+            <Section title="Credentials">
+              <Field label="Account ID">
+                <input className={inputClass} value={id} onChange={(e) => setId(e.target.value.trim())} placeholder={defaultId} />
+              </Field>
+              <Field label="API Key">
+                <input className={inputClass} type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Optional — can be added later" />
+              </Field>
+              <Field label={type === 'alpaca' ? 'Secret Key' : 'API Secret'}>
+                <input className={inputClass} type="password" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} placeholder="Optional — can be added later" />
+              </Field>
+            </Section>
+
+            {error && <p className="text-[12px] text-red">{error}</p>}
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="px-3 py-1.5 text-[13px] font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
+              >
+                {saving ? 'Creating...' : 'Create Account'}
+              </button>
+              <button
+                onClick={() => setType(null)}
+                className="px-3 py-1.5 text-[13px] font-medium rounded-md border border-border hover:bg-bg-tertiary transition-colors"
+              >
+                Back
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </>
   )
