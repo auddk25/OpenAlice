@@ -117,7 +117,7 @@ When to use:
 
 When NOT to use:
 - You already have the symbol and just need a price → use getQuote directly
-- You want to research companies or market data → use equitySearch / cryptoSearch instead
+- You want to research companies or market data → use marketSearchForResearch instead
 - You're about to place an order with a known symbol → placeOrder handles routing itself`,
       inputSchema: z.object({
         pattern: z.string().describe('Symbol or keyword to search (e.g. "AAPL", "BTC", "TSLA")'),

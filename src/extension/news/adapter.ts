@@ -35,7 +35,7 @@ Useful for understanding macro sentiment, geopolitical events, and market-moving
 Returns recent news articles related to the given stock symbol.
 Essential for understanding price movements, earnings reactions, and corporate events.
 
-Use equitySearch first to resolve the correct symbol.`,
+If unsure about the symbol, use marketSearchForResearch to find it.`,
       inputSchema: z.object({
         symbol: z.string().describe('Ticker symbol, e.g. "AAPL", "TSLA"'),
         limit: z.number().int().positive().optional().describe('Number of articles to return (default: 20)'),
