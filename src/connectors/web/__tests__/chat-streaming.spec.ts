@@ -11,7 +11,7 @@ import { createChannel } from '../../../core/async-channel.js'
 import {
   StreamableResult,
   type ProviderEvent,
-} from '../../../core/ai-provider.js'
+} from '../../../core/ai-provider-manager.js'
 import {
   FakeProvider,
   MemorySessionStore,

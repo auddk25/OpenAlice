@@ -106,7 +106,7 @@ export interface AskOptions {
    */
   disabledTools?: string[]
   /**
-   * AI provider to use for this call, overriding the global ai-provider.json config.
+   * AI provider to use for this call, overriding the global ai-provider-manager.json config.
    * Falls back to global config if not specified.
    */
   provider?: 'claude-code' | 'vercel-ai-sdk' | 'agent-sdk'

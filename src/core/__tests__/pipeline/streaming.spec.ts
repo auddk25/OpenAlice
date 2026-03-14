@@ -5,7 +5,7 @@
  * PromiseLike resolution, multi-consumer cursors, and error propagation.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { StreamableResult, type ProviderEvent } from '../../ai-provider.js'
+import { StreamableResult, type ProviderEvent } from '../../ai-provider-manager.js'
 import {
   FakeProvider,
   MemorySessionStore,

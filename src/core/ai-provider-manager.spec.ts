@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { StreamableResult, type ProviderEvent, type ProviderResult, GenerateRouter, type AIProvider } from './ai-provider.js'
+import { StreamableResult, type ProviderEvent, type ProviderResult, GenerateRouter, type AIProvider } from './ai-provider-manager.js'
 import { createChannel } from './async-channel.js'
 
 // ==================== Helpers ====================

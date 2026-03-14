@@ -7,7 +7,7 @@
  */
 
 import { AgentCenter } from '../../agent-center.js'
-import { GenerateRouter, StreamableResult, type ProviderEvent } from '../../ai-provider.js'
+import { GenerateRouter, StreamableResult, type ProviderEvent } from '../../ai-provider-manager.js'
 import { DEFAULT_COMPACTION_CONFIG } from '../../compaction.js'
 
 // Re-export test doubles for convenience
