@@ -20,7 +20,7 @@ beforeAll(async () => {
     apiKey: bybitAccount.apiKey,
     secret: bybitAccount.apiSecret,
     enableRateLimit: true,
-    options: { fetchMarkets: { types: ['linear', 'inverse'] } },
+    options: { fetchMarkets: { types: ['spot', 'linear', 'inverse'] } },
   })
 
   if ('sandbox' in bybitPlatform && bybitPlatform.sandbox) {
@@ -99,6 +99,31 @@ describe('Raw CCXT Bybit diagnostic', () => {
       }))
     }
   }, 15_000)
+
+  it('compare orderId format: spot vs perp', async () => {
+    if (!exchange) return
+
+    // Check if spot market exists
+    const hasSpot = !!exchange.markets['ETH/USDT']
+    const hasPerp = !!exchange.markets['ETH/USDT:USDT']
+    console.log(`\n=== spot ETH/USDT exists: ${hasSpot}, perp ETH/USDT:USDT exists: ${hasPerp} ===`)
+
+    if (hasPerp) {
+      const perpOrder = await exchange.createOrder('ETH/USDT:USDT', 'market', 'buy', 0.01)
+      console.log(`perp orderId: ${perpOrder.id} (type: ${typeof perpOrder.id})`)
+      // Clean up
+      await exchange.createOrder('ETH/USDT:USDT', 'market', 'sell', 0.01, undefined, { reduceOnly: true }).catch(() => {})
+    }
+
+    if (hasSpot) {
+      try {
+        const spotOrder = await exchange.createOrder('ETH/USDT', 'market', 'buy', 0.01)
+        console.log(`spot orderId: ${spotOrder.id} (type: ${typeof spotOrder.id})`)
+      } catch (err: any) {
+        console.log(`spot order failed: ${err.message}`)
+      }
+    }
+  }, 30_000)
 
   it('check market.id vs market.symbol for ETH perps', async () => {
     if (!exchange) return
