@@ -9,7 +9,7 @@
 import ccxt from 'ccxt'
 import Decimal from 'decimal.js'
 import type { Exchange, Order as CcxtOrder } from 'ccxt'
-import { Contract, ContractDescription, ContractDetails, Order, OrderState, Execution, UNSET_DOUBLE, UNSET_DECIMAL } from '@traderalice/ibkr'
+import { Contract, ContractDescription, ContractDetails, Order, OrderState, UNSET_DOUBLE, UNSET_DECIMAL } from '@traderalice/ibkr'
 import type {
   IBroker,
   AccountCapabilities,
@@ -297,21 +297,9 @@ export class CcxtBroker implements IBroker {
         this.orderSymbolCache.set(ccxtOrder.id, ccxtSymbol)
       }
 
-      // Build execution if the order filled immediately (market orders, etc.)
-      const isFilled = ccxtOrder.status === 'closed'
-      let execution: Execution | undefined
-      if (isFilled && ccxtOrder.filled) {
-        execution = new Execution()
-        execution.shares = new Decimal(ccxtOrder.filled)
-        execution.price = ccxtOrder.average ?? 0
-        execution.side = side.toUpperCase()
-        execution.time = ccxtOrder.datetime ?? new Date().toISOString()
-      }
-
       return {
         success: true,
         orderId: ccxtOrder.id,
-        execution,
         orderState: makeOrderState(ccxtOrder.status),
       }
     } catch (err) {
@@ -501,8 +489,14 @@ export class CcxtBroker implements IBroker {
     if (!ccxtSymbol) return null
 
     try {
-      const raw = await this.exchange.fetchOrder(orderId, ccxtSymbol)
-      return this.convertCcxtOrder(raw)
+      // fetchOrder has limitations on some exchanges (e.g. Bybit's 500 order limit).
+      // Fall back to searching open + closed orders by symbol.
+      const [open, closed] = await Promise.all([
+        this.exchange.fetchOpenOrders(ccxtSymbol).catch(() => [] as CcxtOrder[]),
+        this.exchange.fetchClosedOrders(ccxtSymbol, undefined, 50).catch(() => [] as CcxtOrder[]),
+      ])
+      const found = [...open, ...closed].find(o => o.id === orderId)
+      return found ? this.convertCcxtOrder(found) : null
     } catch {
       return null
     }

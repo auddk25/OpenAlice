@@ -9,7 +9,7 @@
  */
 
 import Decimal from 'decimal.js'
-import { Contract, ContractDescription, ContractDetails, Order, OrderState, Execution, UNSET_DECIMAL, UNSET_DOUBLE } from '@traderalice/ibkr'
+import { Contract, ContractDescription, ContractDetails, Order, OrderState, UNSET_DECIMAL, UNSET_DOUBLE } from '@traderalice/ibkr'
 import type {
   IBroker,
   AccountCapabilities,
@@ -226,17 +226,13 @@ export class MockBroker implements IBroker {
         status: 'Filled', fillPrice: price,
       })
 
-      // Build execution
-      const execution = new Execution()
-      execution.shares = qty
-      execution.price = price
-      execution.side = side
-      execution.time = new Date().toISOString()
-
+      // Return submitted — actual fill status discovered via getOrder/sync
+      // (MockBroker executes internally but doesn't expose execution in response,
+      // matching real exchange async behavior)
       const orderState = new OrderState()
       orderState.status = 'Filled'
 
-      return { success: true, orderId, execution, orderState }
+      return { success: true, orderId, orderState }
     }
 
     // Limit/stop order → pending

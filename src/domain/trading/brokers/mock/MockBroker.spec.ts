@@ -30,7 +30,9 @@ describe('precision', () => {
 
     const result = await broker.placeOrder(contract, order)
     expect(result.success).toBe(true)
-    expect(result.execution!.shares.toString()).toBe('0.123456789')
+    // Verify via position — placeOrder doesn't return execution (async model)
+    const positions = await broker.getPositions()
+    expect(positions[0].quantity.toString()).toBe('0.123456789')
   })
 
   it('position quantity matches placed order exactly', async () => {
@@ -46,7 +48,7 @@ describe('precision', () => {
     expect(positions[0].quantity.toString()).toBe('0.51')
   })
 
-  it('closePosition quantity equals position quantity', async () => {
+  it('closePosition removes position completely', async () => {
     const contract = makeContract({ aliceId: 'mock-ETH', symbol: 'ETH' })
     const order = new Order()
     order.action = 'BUY'
@@ -56,7 +58,6 @@ describe('precision', () => {
     await broker.placeOrder(contract, order)
     const closeResult = await broker.closePosition(contract)
     expect(closeResult.success).toBe(true)
-    expect(closeResult.execution!.shares.toString()).toBe('0.51')
 
     const positions = await broker.getPositions()
     expect(positions).toHaveLength(0)
@@ -82,7 +83,7 @@ describe('precision', () => {
 // ==================== placeOrder ====================
 
 describe('placeOrder', () => {
-  it('market order fills immediately, returns execution', async () => {
+  it('market order returns submitted (fill confirmed via getOrder)', async () => {
     broker.setQuote('AAPL', 150)
     const contract = makeContract({ aliceId: 'mock-AAPL', symbol: 'AAPL' })
     const order = new Order()
@@ -92,13 +93,15 @@ describe('placeOrder', () => {
 
     const result = await broker.placeOrder(contract, order)
     expect(result.success).toBe(true)
-    expect(result.execution).toBeDefined()
-    expect(result.execution!.price).toBe(150)
-    expect(result.execution!.shares.toNumber()).toBe(10)
-    expect(result.orderState!.status).toBe('Filled')
+    expect(result.orderId).toBeDefined()
+    // No execution in response — async model
+    expect(result.execution).toBeUndefined()
+    // But getOrder shows filled status
+    const detail = await broker.getOrder(result.orderId!)
+    expect(detail!.orderState.status).toBe('Filled')
   })
 
-  it('limit order stays pending, no execution', async () => {
+  it('limit order stays submitted, no execution', async () => {
     const contract = makeContract({ aliceId: 'mock-AAPL', symbol: 'AAPL' })
     const order = new Order()
     order.action = 'BUY'

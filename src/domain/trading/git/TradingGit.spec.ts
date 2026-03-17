@@ -126,8 +126,7 @@ describe('TradingGit', () => {
       expect(result.hash).toHaveLength(8)
       expect(result.message).toBe('Buy AAPL')
       expect(result.operationCount).toBe(1)
-      expect(result.filled).toHaveLength(1)
-      expect(result.pending).toHaveLength(0)
+      expect(result.submitted).toHaveLength(1)
       expect(result.rejected).toHaveLength(0)
     })
 
@@ -192,7 +191,7 @@ describe('TradingGit', () => {
       const result = await gitFail.push()
 
       expect(result.rejected).toHaveLength(1)
-      expect(result.filled).toHaveLength(0)
+      expect(result.submitted).toHaveLength(0)
     })
 
     it('handles operation exceptions', async () => {
@@ -222,8 +221,8 @@ describe('TradingGit', () => {
       gitPending.commit('limit order')
       const result = await gitPending.push()
 
-      expect(result.pending).toHaveLength(1)
-      expect(result.filled).toHaveLength(0)
+      expect(result.submitted).toHaveLength(1)
+      expect(result.rejected).toHaveLength(0)
     })
   })
 

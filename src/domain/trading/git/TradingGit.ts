@@ -132,11 +132,10 @@ export class TradingGit implements ITradingGit {
     this.pendingMessage = null
     this.pendingHash = null
 
-    const filled = results.filter((r) => r.status === 'filled')
-    const pending = results.filter((r) => r.status === 'pending')
+    const submitted = results.filter((r) => r.status === 'submitted')
     const rejected = results.filter((r) => r.status === 'rejected' || !r.success)
 
-    return { hash, message, operationCount: operations.length, filled, pending, rejected }
+    return { hash, message, operationCount: operations.length, submitted, rejected }
   }
 
   // ==================== git log / show / status ====================
@@ -319,7 +318,7 @@ export class TradingGit implements ITradingGit {
         if (
           result.orderId &&
           !seen.has(result.orderId) &&
-          orderStatus.get(result.orderId) === 'pending'
+          orderStatus.get(result.orderId) === 'submitted'
         ) {
           const symbol = getOperationSymbol(commit.operations[j])
           pending.push({ orderId: result.orderId, symbol })
@@ -514,23 +513,14 @@ export class TradingGit implements ITradingGit {
     }
 
     const orderId = rawObj.orderId as string | undefined
-    const execution = rawObj.execution as OperationResult['execution']
     const orderState = rawObj.orderState as OperationResult['orderState']
 
-    // Determine status from execution or orderState
-    let status: OperationResult['status'] = 'filled'
-    if (execution?.price) {
-      status = 'filled'
-    } else if (orderId) {
-      status = 'pending'
-    }
-
+    // Push only knows submitted or rejected — actual fill status comes from sync
     return {
       action: op.action,
       success: true,
       orderId,
-      status,
-      execution,
+      status: 'submitted',
       orderState,
       raw,
     }

@@ -3,7 +3,7 @@ import Decimal from 'decimal.js'
 import { Order, OrderState, UNSET_DOUBLE, UNSET_DECIMAL } from '@traderalice/ibkr'
 import { UnifiedTradingAccount } from './UnifiedTradingAccount.js'
 import type { UnifiedTradingAccountOptions } from './UnifiedTradingAccount.js'
-import { MockBroker, makeContract, makePosition, makeOpenOrder, makePlaceOrderResult } from './brokers/mock/index.js'
+import { MockBroker, makeContract, makePosition, makeOpenOrder } from './brokers/mock/index.js'
 import type { Operation } from './git/types.js'
 import './contract-ext.js'
 
@@ -81,13 +81,7 @@ describe('UTA — operation dispatch', () => {
       expect(passedOrder.lmtPrice).toBe(150)
     })
 
-    it('returns success result in push', async () => {
-      vi.spyOn(broker, 'placeOrder').mockResolvedValue(makePlaceOrderResult({
-        orderId: 'ord-123',
-        execution: { avgPrice: 155, shares: 10, price: 155 } as any,
-        orderState: (() => { const os = new OrderState(); os.status = 'Filled'; return os })(),
-      }))
-
+    it('returns submitted result in push (fill confirmed via sync)', async () => {
       const contract = makeContract({ symbol: 'AAPL' })
       const order = new Order()
       order.action = 'BUY'
@@ -98,9 +92,9 @@ describe('UTA — operation dispatch', () => {
       uta.git.commit('buy AAPL')
       const result = await uta.push()
 
-      // Has execution → filled
-      expect(result.filled).toHaveLength(1)
-      expect(result.filled[0].orderId).toBe('ord-123')
+      // Push only returns submitted — never filled
+      expect(result.submitted).toHaveLength(1)
+      expect(result.submitted[0].orderId).toBeDefined()
     })
 
     it('handles broker error', async () => {
@@ -452,7 +446,7 @@ describe('UTA — sync', () => {
     uta.stagePlaceOrder({ aliceId: 'mock-AAPL', symbol: 'AAPL', side: 'buy', type: 'limit', qty: 10, price: 150 })
     uta.commit('limit buy')
     const pushResult = await uta.push()
-    const orderId = pushResult.pending[0]?.orderId
+    const orderId = pushResult.submitted[0]?.orderId
     expect(orderId).toBeDefined()
 
     // Simulate fill via test helper
@@ -471,7 +465,7 @@ describe('UTA — sync', () => {
     uta.stagePlaceOrder({ aliceId: 'mock-AAPL', symbol: 'AAPL', side: 'buy', type: 'limit', qty: 10, price: 150 })
     uta.commit('limit buy')
     const pushResult = await uta.push()
-    const orderId = pushResult.pending[0]?.orderId
+    const orderId = pushResult.submitted[0]?.orderId
     expect(orderId).toBeDefined()
 
     // Clear all orders — simulates order vanishing from exchange

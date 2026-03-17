@@ -367,7 +367,7 @@ function TradeLog({ commits }: { commits: CommitWithAccount[] }) {
                       {commit.operations.map((op, i) => (
                         <span key={i} className="text-[11px] text-text-muted bg-bg px-1.5 py-0.5 rounded">
                           {op.symbol} {op.change}
-                          <span className={`ml-1 ${op.status === 'filled' ? 'text-green' : op.status === 'rejected' ? 'text-red' : 'text-text-muted/50'}`}>
+                          <span className={`ml-1 ${op.status === 'filled' ? 'text-green' : op.status === 'rejected' ? 'text-red' : op.status === 'submitted' ? 'text-accent' : 'text-text-muted/50'}`}>
                             {op.status}
                           </span>
                         </span>

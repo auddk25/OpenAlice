@@ -258,7 +258,7 @@ export class UnifiedTradingAccount {
         updates.push({
           orderId,
           symbol,
-          previousStatus: 'pending',
+          previousStatus: 'submitted',
           currentStatus: status === 'Filled' ? 'filled' : status === 'Cancelled' ? 'cancelled' : 'rejected',
         })
       }

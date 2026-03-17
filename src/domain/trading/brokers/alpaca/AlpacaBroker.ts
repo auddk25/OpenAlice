@@ -187,33 +187,9 @@ export class AlpacaBroker implements IBroker {
       if (order.outsideRth) alpacaOrder.extended_hours = true
 
       const result = await this.client.createOrder(alpacaOrder) as AlpacaOrderRaw
-      const isFilled = result.status === 'filled'
-
       return {
         success: true,
         orderId: result.id,
-        execution: isFilled ? {
-          execId: '',
-          time: result.filled_at ?? '',
-          acctNumber: this.id,
-          exchange: 'SMART',
-          side: order.action,
-          shares: new Decimal(result.filled_qty ?? 0),
-          price: parseFloat(result.filled_avg_price ?? '0'),
-          permId: 0,
-          clientId: 0,
-          orderId: 0,
-          liquidation: 0,
-          cumQty: new Decimal(result.filled_qty ?? 0),
-          avgPrice: parseFloat(result.filled_avg_price ?? '0'),
-          orderRef: '',
-          evRule: '',
-          evMultiplier: 0,
-          modelCode: '',
-          lastLiquidity: 0,
-          pendingPriceRevision: false,
-          submitter: '',
-        } as any : undefined,
         orderState: makeOrderState(result.status),
       }
     } catch (err) {
