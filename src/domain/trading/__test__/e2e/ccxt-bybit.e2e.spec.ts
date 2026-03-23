@@ -30,22 +30,25 @@ beforeAll(async () => {
 describe('CcxtBroker — Bybit e2e', () => {
   beforeEach(({ skip }) => { if (!broker) skip('no Bybit account') })
 
+  /** Narrow broker type — beforeEach guarantees non-null via skip(). */
+  function b(): IBroker { return broker! }
+
   it('fetches account info with positive equity', async () => {
-    const account = await broker.getAccount()
+    const account = await b().getAccount()
     expect(account.netLiquidation).toBeGreaterThan(0)
     console.log(`  equity: $${account.netLiquidation.toFixed(2)}, cash: $${account.totalCashValue.toFixed(2)}`)
   })
 
   it('fetches positions', async () => {
 
-    const positions = await broker.getPositions()
+    const positions = await b().getPositions()
     expect(Array.isArray(positions)).toBe(true)
     console.log(`  ${positions.length} open positions`)
   })
 
   it('searches ETH contracts', async () => {
 
-    const results = await broker.searchContracts('ETH')
+    const results = await b().searchContracts('ETH')
     expect(results.length).toBeGreaterThan(0)
     const perp = results.find(r => r.contract.localSymbol?.includes('USDT:USDT'))
     expect(perp).toBeDefined()
@@ -53,12 +56,12 @@ describe('CcxtBroker — Bybit e2e', () => {
   })
 
   it('places market buy 0.01 ETH → execution returned', async ({ skip }) => {
-    const matches = await broker!.searchContracts('ETH')
+    const matches = await b().searchContracts('ETH')
     const ethPerp = matches.find(m => m.contract.localSymbol?.includes('USDT:USDT'))
-    if (!ethPerp) skip('ETH/USDT perp not found')
+    if (!ethPerp) return skip('ETH/USDT perp not found')
 
     // Diagnostic: see raw CCXT createOrder response
-    const exchange = (broker as any).exchange
+    const exchange = (b() as any).exchange
     const rawOrder = await exchange.createOrder('ETH/USDT:USDT', 'market', 'buy', 0.01)
     console.log('  CCXT raw createOrder:', JSON.stringify({
       id: rawOrder.id, status: rawOrder.status, filled: rawOrder.filled,
@@ -67,7 +70,7 @@ describe('CcxtBroker — Bybit e2e', () => {
     }))
 
     // Clean up diagnostic order
-    await broker.closePosition(ethPerp.contract, new Decimal('0.01'))
+    await b().closePosition(ethPerp.contract, new Decimal('0.01'))
 
     // Now test through our placeOrder
     const order = new Order()
@@ -75,7 +78,7 @@ describe('CcxtBroker — Bybit e2e', () => {
     order.orderType = 'MKT'
     order.totalQuantity = new Decimal('0.01')
 
-    const result = await broker.placeOrder(ethPerp.contract, order)
+    const result = await b().placeOrder(ethPerp.contract, order)
     expect(result.success).toBe(true)
     expect(result.orderId).toBeDefined()
     console.log(`  placeOrder result: orderId=${result.orderId}, execution=${!!result.execution}, orderState=${result.orderState?.status}`)
@@ -89,40 +92,40 @@ describe('CcxtBroker — Bybit e2e', () => {
 
   it('verifies ETH position exists after buy', async () => {
 
-    const positions = await broker.getPositions()
+    const positions = await b().getPositions()
     const ethPos = positions.find(p => p.contract.symbol === 'ETH')
     expect(ethPos).toBeDefined()
     console.log(`  ETH position: ${ethPos!.quantity} ${ethPos!.side}`)
   })
 
   it('closes ETH position with reduceOnly', async ({ skip }) => {
-    const matches = await broker!.searchContracts('ETH')
+    const matches = await b().searchContracts('ETH')
     const ethPerp = matches.find(m => m.contract.localSymbol?.includes('USDT:USDT'))
-    if (!ethPerp) skip('ETH/USDT perp not found')
+    if (!ethPerp) return skip('ETH/USDT perp not found')
 
-    const result = await broker.closePosition(ethPerp.contract, new Decimal('0.01'))
+    const result = await b().closePosition(ethPerp.contract, new Decimal('0.01'))
     expect(result.success).toBe(true)
     console.log(`  close orderId=${result.orderId}, success=${result.success}`)
   }, 15_000)
 
   it('queries order by ID', async ({ skip }) => {
     // Place a small order to get an orderId
-    const matches = await broker!.searchContracts('ETH')
+    const matches = await b().searchContracts('ETH')
     const ethPerp = matches.find(m => m.contract.localSymbol?.includes('USDT:USDT'))
-    if (!ethPerp) skip('ETH/USDT perp not found')
+    if (!ethPerp) return skip('ETH/USDT perp not found')
 
     const order = new Order()
     order.action = 'BUY'
     order.orderType = 'MKT'
     order.totalQuantity = new Decimal('0.01')
 
-    const placed = await broker!.placeOrder(ethPerp!.contract, order)
-    if (!placed.orderId) skip('no orderId returned')
+    const placed = await b().placeOrder(ethPerp.contract, order)
+    if (!placed.orderId) return skip('no orderId returned')
 
     // Wait for exchange to settle — Bybit needs time before order appears in closed list
     await new Promise(r => setTimeout(r, 5000))
 
-    const detail = await broker.getOrder(placed.orderId)
+    const detail = await b().getOrder(placed.orderId)
     console.log(`  getOrder(${placed.orderId}): ${detail ? `status=${detail.orderState.status}` : 'null'}`)
 
     expect(detail).not.toBeNull()
@@ -131,6 +134,6 @@ describe('CcxtBroker — Bybit e2e', () => {
     }
 
     // Clean up
-    await broker.closePosition(ethPerp.contract, new Decimal('0.01'))
+    await b().closePosition(ethPerp.contract, new Decimal('0.01'))
   }, 15_000)
 })

@@ -6,7 +6,7 @@
  * Each execute function is a thin delegation to UTA methods.
  */
 
-import { tool } from 'ai'
+import { tool, type Tool } from 'ai'
 import { z } from 'zod'
 import { Contract } from '@traderalice/ibkr'
 import type { AccountManager } from '@/domain/trading/account-manager.js'
@@ -34,7 +34,7 @@ const sourceDesc = (required: boolean, extra?: string) => {
   return base + req + (extra ? ` ${extra}` : '')
 }
 
-export function createTradingTools(manager: AccountManager) {
+export function createTradingTools(manager: AccountManager): Record<string, Tool> {
   return {
     listAccounts: tool({
       description: 'List all registered trading accounts with their id, provider, label, and capabilities.',

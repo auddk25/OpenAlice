@@ -49,9 +49,11 @@ export interface AccountDownloadResult {
   positions: Position[]
 }
 
-/** Collected open order from openOrder callback. */
+/** Collected open order from openOrder/completedOrder callback. */
 export interface CollectedOpenOrder {
   contract: Contract
   order: Order
   orderState: OrderState
+  /** Average fill price — captured from orderStatus() callback when available. */
+  avgFillPrice?: number
 }

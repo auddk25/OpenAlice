@@ -93,6 +93,8 @@ export interface OpenOrder {
   contract: Contract
   order: Order
   orderState: OrderState
+  /** Average fill price — from orderStatus callback or broker-specific source. */
+  avgFillPrice?: number
 }
 
 // ==================== Account info ====================

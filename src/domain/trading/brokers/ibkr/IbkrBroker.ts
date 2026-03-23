@@ -91,6 +91,9 @@ export class IbkrBroker implements IBroker {
   // ==================== Lifecycle ====================
 
   async init(): Promise<void> {
+    // Idempotent — skip if already connected (e.g. UTA re-wrapping a shared broker)
+    if (this.client.isConnected()) return
+
     const host = this.config.host ?? '127.0.0.1'
     const port = this.config.port ?? 7497
     const clientId = this.config.clientId ?? 0
@@ -216,27 +219,27 @@ export class IbkrBroker implements IBroker {
 
   async closePosition(contract: Contract, quantity?: Decimal): Promise<PlaceOrderResult> {
     const symbol = resolveSymbol(contract)
-    if (!symbol) {
-      return { success: false, error: 'Cannot resolve contract symbol' }
-    }
 
     // Find current position to determine side
     const positions = await this.getPositions()
     const pos = positions.find(p =>
       (contract.conId && p.contract.conId === contract.conId) ||
-      resolveSymbol(p.contract) === symbol,
+      (symbol && resolveSymbol(p.contract) === symbol),
     )
     if (!pos) {
-      return { success: false, error: `No position for ${symbol}` }
+      return { success: false, error: `No position for ${symbol ?? `conId=${contract.conId}`}` }
     }
 
+    // Use the position's contract (has conId etc.) but route via SMART
+    const closeContract = pos.contract
+    closeContract.exchange = 'SMART'
     const order = new Order()
     order.action = pos.side === 'long' ? 'SELL' : 'BUY'
     order.orderType = 'MKT'
     order.totalQuantity = quantity ?? pos.quantity
     order.tif = 'DAY'
 
-    return this.placeOrder(contract, order)
+    return this.placeOrder(closeContract, order)
   }
 
   // ==================== Queries ====================
@@ -265,16 +268,29 @@ export class IbkrBroker implements IBroker {
     const allOrders = await this.bridge.requestOpenOrders()
     return allOrders
       .filter(o => orderIds.includes(String(o.order.orderId)))
-      .map(o => ({
-        contract: o.contract,
-        order: o.order,
-        orderState: o.orderState,
-      }))
+      .map(o => this.enrichWithFillData(o))
   }
 
   async getOrder(orderId: string): Promise<OpenOrder | null> {
+    // Try open orders first
     const results = await this.getOrders([orderId])
-    return results[0] ?? null
+    if (results[0]) return results[0]
+
+    // Fallback to completed orders (filled/cancelled orders leave the open list)
+    const completed = await this.bridge.requestCompletedOrders()
+    const match = completed.find(o => String(o.order.orderId) === orderId)
+    return match ? this.enrichWithFillData(match) : null
+  }
+
+  /** Attach avgFillPrice from cached orderStatus data if available. */
+  private enrichWithFillData(o: import('./ibkr-types.js').CollectedOpenOrder): OpenOrder {
+    const fillData = this.bridge.getFillData(o.order.orderId)
+    return {
+      contract: o.contract,
+      order: o.order,
+      orderState: o.orderState,
+      avgFillPrice: fillData?.avgFillPrice ?? o.avgFillPrice,
+    }
   }
 
   async getQuote(contract: Contract): Promise<Quote> {

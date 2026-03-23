@@ -273,8 +273,10 @@ export class TradingGit implements ITradingGit {
 
       case 'syncOrders': {
         const status = result?.status || 'unknown'
-        const price = result?.execution?.price ? ` @${result.execution.price}` : ''
-        return `synced → ${status}${price}`
+        const price = result?.filledPrice ? ` @${result.filledPrice}`
+          : result?.execution?.price ? ` @${result.execution.price}` : ''
+        const qty = result?.filledQty ? ` (${result.filledQty} filled)` : ''
+        return `synced → ${status}${price}${qty}`
       }
     }
   }
@@ -377,6 +379,8 @@ export class TradingGit implements ITradingGit {
         success: true,
         orderId: u.orderId,
         status: u.currentStatus,
+        filledQty: u.filledQty,
+        filledPrice: u.filledPrice,
       })),
       stateAfter: currentState,
       timestamp: new Date().toISOString(),

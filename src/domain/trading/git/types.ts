@@ -37,6 +37,8 @@ export interface OperationResult {
   status: OperationStatus
   execution?: Execution
   orderState?: OrderState
+  filledQty?: number
+  filledPrice?: number
   error?: string
   raw?: unknown
 }

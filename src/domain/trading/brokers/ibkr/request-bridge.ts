@@ -80,6 +80,16 @@ export class RequestBridge extends DefaultEWrapper {
     timer: ReturnType<typeof setTimeout>
   } | null = null
 
+  private completedOrdersCollector: {
+    orders: CollectedOpenOrder[]
+    resolve: (orders: CollectedOpenOrder[]) => void
+    reject: (err: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  } | null = null
+
+  // ---- Fill data cache (from orderStatus callbacks) ----
+  private fillData_ = new Map<number, { filled: Decimal; avgFillPrice: number }>()
+
   // ---- Connection handshake ----
   private connectResolve: (() => void) | null = null
   private connectReject: ((err: Error) => void) | null = null
@@ -219,6 +229,24 @@ export class RequestBridge extends DefaultEWrapper {
     })
   }
 
+  /** Request completed orders (filled/cancelled). */
+  requestCompletedOrders(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<CollectedOpenOrder[]> {
+    return new Promise<CollectedOpenOrder[]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.completedOrdersCollector = null
+        reject(new BrokerError('NETWORK', `Completed orders request timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+
+      this.completedOrdersCollector = { orders: [], resolve, reject, timer }
+      this.client_!.reqCompletedOrders(true)
+    })
+  }
+
+  /** Get cached fill data from orderStatus callbacks. */
+  getFillData(orderId: number): { filled: Decimal; avgFillPrice: number } | undefined {
+    return this.fillData_.get(orderId)
+  }
+
   /** Request current TWS server time. */
   requestCurrentTime(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<number> {
     return new Promise<number>((resolve, reject) => {
@@ -303,6 +331,12 @@ export class RequestBridge extends DefaultEWrapper {
       clearTimeout(this.openOrdersCollector.timer)
       this.openOrdersCollector.reject(error)
       this.openOrdersCollector = null
+    }
+
+    if (this.completedOrdersCollector) {
+      clearTimeout(this.completedOrdersCollector.timer)
+      this.completedOrdersCollector.reject(error)
+      this.completedOrdersCollector = null
     }
 
     if (this.currentTimePending) {
@@ -503,9 +537,9 @@ export class RequestBridge extends DefaultEWrapper {
   override orderStatus(
     orderId: number,
     status: string,
-    _filled: Decimal,
+    filled: Decimal,
     _remaining: Decimal,
-    _avgFillPrice: number,
+    avgFillPrice: number,
     _permId: number,
     _parentId: number,
     _lastFillPrice: number,
@@ -513,6 +547,11 @@ export class RequestBridge extends DefaultEWrapper {
     _whyHeld: string,
     _mktCapPrice: number,
   ): void {
+    // Cache fill data for later retrieval (e.g. by sync())
+    if (filled.greaterThan(0) && avgFillPrice > 0) {
+      this.fillData_.set(orderId, { filled, avgFillPrice })
+    }
+
     // For cancel requests, we wait for status 'Cancelled'
     if (this.orderPending.has(orderId) && status === 'Cancelled') {
       const os = new OrderStateClass()
@@ -530,6 +569,19 @@ export class RequestBridge extends DefaultEWrapper {
     clearTimeout(this.openOrdersCollector.timer)
     this.openOrdersCollector.resolve(this.openOrdersCollector.orders)
     this.openOrdersCollector = null
+  }
+
+  // ---- Completed orders ----
+
+  override completedOrder(contract: Contract, order: Order, orderState: OrderState): void {
+    this.completedOrdersCollector?.orders.push({ contract, order, orderState })
+  }
+
+  override completedOrdersEnd(): void {
+    if (!this.completedOrdersCollector) return
+    clearTimeout(this.completedOrdersCollector.timer)
+    this.completedOrdersCollector.resolve(this.completedOrdersCollector.orders)
+    this.completedOrdersCollector = null
   }
 
   // ---- Current time ----

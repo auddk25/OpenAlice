@@ -8,7 +8,7 @@
  */
 
 import Decimal from 'decimal.js'
-import { Contract, Order, ContractDescription, ContractDetails } from '@traderalice/ibkr'
+import { Contract, Order, ContractDescription, ContractDetails, UNSET_DECIMAL } from '@traderalice/ibkr'
 import { BrokerError, type IBroker, type AccountInfo, type Position, type OpenOrder, type PlaceOrderResult, type Quote, type MarketClock, type AccountCapabilities, type BrokerHealth, type BrokerHealthInfo } from './brokers/types.js'
 import { TradingGit } from './git/TradingGit.js'
 import type {
@@ -461,11 +461,19 @@ export class UnifiedTradingAccount {
 
       const status = brokerOrder.orderState.status
       if (status !== 'Submitted' && status !== 'PreSubmitted') {
+        // Extract fill data when available
+        const orderFilledQty = brokerOrder.order.filledQuantity
+        const filledQty = orderFilledQty && !orderFilledQty.equals(UNSET_DECIMAL)
+          ? orderFilledQty.toNumber()
+          : undefined
+
         updates.push({
           orderId,
           symbol,
           previousStatus: 'submitted',
           currentStatus: status === 'Filled' ? 'filled' : status === 'Cancelled' ? 'cancelled' : 'rejected',
+          filledQty,
+          filledPrice: brokerOrder.avgFillPrice,
         })
       }
     }
