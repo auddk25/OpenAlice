@@ -83,6 +83,38 @@ describe('IbkrBroker — connectivity', () => {
   })
 })
 
+// ==================== Currency tracking (any time) ====================
+
+describe('IbkrBroker — currency tracking', () => {
+  beforeEach(({ skip }) => { if (!broker) skip('no IBKR paper account') })
+
+  it('getAccount returns baseCurrency field', async () => {
+    const account = await broker!.getAccount()
+    expect(account.baseCurrency).toBeDefined()
+    expect(typeof account.baseCurrency).toBe('string')
+    expect(account.baseCurrency.length).toBeGreaterThanOrEqual(3)
+    console.log(`  baseCurrency: ${account.baseCurrency}`)
+  })
+
+  it('positions carry currency field matching contract.currency', async () => {
+    const positions = await broker!.getPositions()
+    if (positions.length === 0) {
+      console.log('  no positions — skipping currency check')
+      return
+    }
+    for (const p of positions) {
+      expect(p.currency).toBeDefined()
+      expect(typeof p.currency).toBe('string')
+      expect(p.currency.length).toBeGreaterThanOrEqual(3)
+      // currency should match what the contract says
+      if (p.contract.currency) {
+        expect(p.currency).toBe(p.contract.currency)
+      }
+      console.log(`  ${p.contract.symbol}: currency=${p.currency}, avgCost=${p.avgCost}, marketPrice=${p.marketPrice}`)
+    }
+  })
+})
+
 // ==================== Order lifecycle (any time — limit orders accepted outside market hours) ====================
 
 describe('IbkrBroker — order lifecycle', () => {

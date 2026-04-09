@@ -15,7 +15,8 @@ interface AggregatedEquity {
   totalCash: number
   totalUnrealizedPnL: number
   totalRealizedPnL: number
-  accounts: Array<{ id: string; label: string; equity: number; cash: number; health?: string }>
+  fxWarnings?: string[]
+  accounts: Array<{ id: string; label: string; baseCurrency?: string; equity: number; cash: number; health?: string }>
 }
 
 interface AccountData {
@@ -27,12 +28,20 @@ interface AccountData {
   error?: string
 }
 
+interface FxRateInfo {
+  currency: string
+  rate: number
+  source: string
+  updatedAt: string
+}
+
 interface PortfolioData {
   equity: AggregatedEquity | null
   accounts: AccountData[]
+  fxRates: FxRateInfo[]
 }
 
-const EMPTY: PortfolioData = { equity: null, accounts: [] }
+const EMPTY: PortfolioData = { equity: null, accounts: [], fxRates: [] }
 
 // ==================== Page ====================
 
@@ -157,53 +166,63 @@ export function PortfolioPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto px-4 md:px-6 py-5">
-        <div className="max-w-[900px] space-y-5">
-          <HeroMetrics equity={data.equity} />
+        <div className="flex gap-6 items-start">
+          {/* Main column */}
+          <div className="flex-1 min-w-0 space-y-5">
+            <HeroMetrics equity={data.equity} />
 
-          {curvePoints.length > 0 && (
-            <EquityCurve
-              points={curvePoints}
-              accounts={chartAccounts}
-              selectedAccountId={curveAccountId}
-              onAccountChange={handleAccountChange}
-              onPointClick={handlePointClick}
-              selectedTimestamp={selectedTimestamp}
+            {curvePoints.length > 0 && (
+              <EquityCurve
+                points={curvePoints}
+                accounts={chartAccounts}
+                selectedAccountId={curveAccountId}
+                onAccountChange={handleAccountChange}
+                onPointClick={handlePointClick}
+                selectedTimestamp={selectedTimestamp}
+              />
+            )}
+
+            <SnapshotSettings
+              enabled={snapshotEnabled}
+              every={snapshotEvery}
+              onEnabledChange={setSnapshotEnabled}
+              onEveryChange={setSnapshotEvery}
+              saveStatus={snapshotSaveStatus}
             />
-          )}
 
-          <SnapshotSettings
-            enabled={snapshotEnabled}
-            every={snapshotEvery}
-            onEnabledChange={setSnapshotEnabled}
-            onEveryChange={setSnapshotEvery}
-            saveStatus={snapshotSaveStatus}
-          />
+            {selectedSnapshot && (
+              <SnapshotDetail
+                snapshot={selectedSnapshot}
+                onClose={() => { setSelectedSnapshot(null); setSelectedTimestamp(null) }}
+              />
+            )}
 
-          {selectedSnapshot && (
-            <SnapshotDetail
-              snapshot={selectedSnapshot}
-              onClose={() => { setSelectedSnapshot(null); setSelectedTimestamp(null) }}
-            />
-          )}
+            {accountSources.length > 0 && (
+              <AccountStrip sources={accountSources} />
+            )}
 
-          {accountSources.length > 0 && (
-            <AccountStrip sources={accountSources} />
-          )}
+            {allPositions.length > 0 && (
+              <PositionsTable positions={allPositions} fxRates={data.fxRates} />
+            )}
 
-          {allPositions.length > 0 && (
-            <PositionsTable positions={allPositions} />
-          )}
+            {/* Empty states */}
+            {data.accounts.length === 0 && !loading && (
+              <EmptyState title="No trading accounts connected." description="Configure connections in the Trading page." />
+            )}
+            {data.accounts.length > 0 && allPositions.length === 0 && !loading && (
+              <EmptyState title="No open positions." />
+            )}
 
-          {/* Empty states */}
-          {data.accounts.length === 0 && !loading && (
-            <EmptyState title="No trading accounts connected." description="Configure connections in the Trading page." />
-          )}
-          {data.accounts.length > 0 && allPositions.length === 0 && !loading && (
-            <EmptyState title="No open positions." />
-          )}
+            {allWalletLogs.length > 0 && (
+              <TradeLog commits={allWalletLogs} />
+            )}
+          </div>
 
-          {allWalletLogs.length > 0 && (
-            <TradeLog commits={allWalletLogs} />
+          {/* Right sidebar — FX rates */}
+          {data.fxRates.length > 0 && (
+            <div className="hidden lg:block w-[200px] shrink-0 sticky top-5">
+              <FxRatesPanel rates={data.fxRates} />
+            </div>
           )}
         </div>
       </div>
@@ -215,13 +234,15 @@ export function PortfolioPage() {
 
 async function fetchPortfolioData(): Promise<PortfolioData> {
   try {
-    const [equityResult, accountsResult] = await Promise.allSettled([
+    const [equityResult, accountsResult, fxResult] = await Promise.allSettled([
       api.trading.equity(),
       api.trading.listAccounts(),
+      api.trading.fxRates(),
     ])
 
     const equity = equityResult.status === 'fulfilled' ? equityResult.value : null
     const accountsList = accountsResult.status === 'fulfilled' ? accountsResult.value.accounts : []
+    const fxRates = fxResult.status === 'fulfilled' ? fxResult.value.rates : []
 
     const accounts = await Promise.all(
       accountsList.map(async (acct): Promise<AccountData> => {
@@ -237,7 +258,7 @@ async function fetchPortfolioData(): Promise<PortfolioData> {
       }),
     )
 
-    return { equity, accounts }
+    return { equity, accounts, fxRates }
   } catch {
     return EMPTY
   }
@@ -355,7 +376,10 @@ function contractDisplay(p: Position): { name: string; tag?: string } {
   return { name: sym }
 }
 
-function PositionsTable({ positions }: { positions: PositionWithAccount[] }) {
+function PositionsTable({ positions, fxRates }: { positions: PositionWithAccount[]; fxRates: FxRateInfo[] }) {
+  const rateMap = Object.fromEntries(fxRates.map(r => [r.currency, r.rate]))
+  const hasNonUsd = positions.some(p => p.currency && p.currency !== 'USD')
+
   return (
     <div>
       <h3 className="text-[13px] font-semibold text-text-muted uppercase tracking-wide mb-3">
@@ -366,10 +390,12 @@ function PositionsTable({ positions }: { positions: PositionWithAccount[] }) {
           <thead>
             <tr className="bg-bg-secondary text-text-muted text-left">
               <th className="px-3 py-2 font-medium">Symbol</th>
+              <th className="px-3 py-2 font-medium text-center">Ccy</th>
               <th className="px-3 py-2 font-medium text-right">Qty</th>
               <th className="px-3 py-2 font-medium text-right">Avg Cost</th>
               <th className="px-3 py-2 font-medium text-right">Current</th>
               <th className="px-3 py-2 font-medium text-right">Mkt Value</th>
+              {hasNonUsd && <th className="px-3 py-2 font-medium text-right">USD Value</th>}
               <th className="px-3 py-2 font-medium text-right">PnL</th>
               <th className="px-3 py-2 font-medium text-right">PnL %</th>
             </tr>
@@ -378,11 +404,13 @@ function PositionsTable({ positions }: { positions: PositionWithAccount[] }) {
             {positions.map((p, i) => {
               const display = contractDisplay(p)
               const deriv = isDerivative(p)
+              const ccy = p.currency ?? 'USD'
+              const fxRate = ccy === 'USD' ? 1 : (rateMap[ccy] ?? 1)
+              const usdValue = p.marketValue * fxRate
 
               return (
                 <tr key={i} className="border-t border-border hover:bg-bg-tertiary/30 transition-colors">
                   <td className="px-3 py-2">
-                    {/* Primary: symbol + inline badges */}
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-medium text-text">{display.name}</span>
                       {display.tag && (
@@ -396,12 +424,18 @@ function PositionsTable({ positions }: { positions: PositionWithAccount[] }) {
                       <span className="text-[10px] text-text-muted/50">{p.accountLabel}</span>
                     </div>
                   </td>
+                  <td className="px-3 py-2 text-center text-text-muted text-[11px]">{ccy}</td>
                   <td className="px-3 py-2 text-right text-text">{fmtNum(Number(p.quantity))}</td>
-                  <td className="px-3 py-2 text-right text-text-muted">{fmt(p.avgCost)}</td>
-                  <td className="px-3 py-2 text-right text-text">{fmt(p.marketPrice)}</td>
-                  <td className="px-3 py-2 text-right text-text">{fmt(p.marketValue)}</td>
+                  <td className="px-3 py-2 text-right text-text-muted">{fmt(p.avgCost, p.currency)}</td>
+                  <td className="px-3 py-2 text-right text-text">{fmt(p.marketPrice, p.currency)}</td>
+                  <td className="px-3 py-2 text-right text-text">{fmt(p.marketValue, p.currency)}</td>
+                  {hasNonUsd && (
+                    <td className="px-3 py-2 text-right text-text-muted">
+                      {ccy === 'USD' ? '—' : fmt(usdValue)}
+                    </td>
+                  )}
                   <td className={`px-3 py-2 text-right font-medium ${p.unrealizedPnL >= 0 ? 'text-green' : 'text-red'}`}>
-                    {fmtPnl(p.unrealizedPnL)}
+                    {fmtPnl(p.unrealizedPnL, p.currency)}
                   </td>
                   <td className={`px-3 py-2 text-right ${p.unrealizedPnL >= 0 ? 'text-green' : 'text-red'}`}>
                     {(() => {
@@ -416,6 +450,36 @@ function PositionsTable({ positions }: { positions: PositionWithAccount[] }) {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+// ==================== FX Rates Panel ====================
+
+function FxRatesPanel({ rates }: { rates: FxRateInfo[] }) {
+  return (
+    <div>
+      <h3 className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2">
+        FX Rates
+      </h3>
+      <div className="border border-border rounded-lg overflow-hidden">
+        <table className="w-full text-[12px]">
+          <tbody>
+            {rates.map(r => (
+              <tr key={r.currency} className="border-t border-border first:border-t-0">
+                <td className="px-2.5 py-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${r.source === 'live' ? 'bg-green' : r.source === 'cached' ? 'bg-yellow-400' : 'bg-text-muted/40'}`} />
+                    <span className="font-medium text-text">{r.currency}</span>
+                  </div>
+                </td>
+                <td className="px-2.5 py-1.5 text-right text-text tabular-nums">{r.rate.toFixed(4)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10px] text-text-muted/50 mt-1.5 text-right">per 1 unit → USD</p>
     </div>
   )
 }
@@ -549,14 +613,26 @@ function SnapshotSettings({ enabled, every, onEnabledChange, onEveryChange, save
 
 // ==================== Formatting Helpers ====================
 
-function fmt(n: number): string {
-  return n >= 1000 ? `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : `$${n.toFixed(2)}`
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: '$', HKD: 'HK$', EUR: '€', GBP: '£', JPY: '¥',
+  CNY: '¥', CNH: '¥', CAD: 'C$', AUD: 'A$', CHF: 'CHF ',
+  SGD: 'S$', KRW: '₩', INR: '₹', TWD: 'NT$', BRL: 'R$',
 }
 
-function fmtPnl(n: number): string {
+function currencySymbol(currency?: string): string {
+  if (!currency) return '$'
+  return CURRENCY_SYMBOLS[currency.toUpperCase()] ?? `${currency} `
+}
+
+function fmt(n: number, currency?: string): string {
+  const sym = currencySymbol(currency)
+  return n >= 1000 ? `${sym}${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `${sym}${n.toFixed(2)}`
+}
+
+function fmtPnl(n: number, currency?: string): string {
   const sign = n >= 0 ? '+' : ''
-  return `${sign}${fmt(n)}`
+  return `${sign}${fmt(n, currency)}`
 }
 
 function fmtNum(n: number): string {

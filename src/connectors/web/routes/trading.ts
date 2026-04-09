@@ -58,6 +58,31 @@ export function createTradingRoutes(ctx: EngineContext) {
     return c.json(equity)
   })
 
+  // ==================== FX rates ====================
+
+  app.get('/fx-rates', async (c) => {
+    // Collect all unique currencies from positions across all accounts
+    const currencies = new Set<string>()
+    for (const uta of ctx.accountManager.resolve()) {
+      if (uta.health === 'offline') continue
+      try {
+        const positions = await uta.getPositions()
+        for (const p of positions) {
+          if (p.currency && p.currency !== 'USD') currencies.add(p.currency)
+        }
+        const account = await uta.getAccount()
+        if (account.baseCurrency && account.baseCurrency !== 'USD') currencies.add(account.baseCurrency)
+      } catch { /* skip unhealthy */ }
+    }
+
+    const rates: Array<{ currency: string; rate: number; source: string; updatedAt: string }> = []
+    for (const cur of currencies) {
+      const fx = await ctx.fxService.getRate(cur)
+      rates.push({ currency: cur, rate: fx.rate, source: fx.source, updatedAt: fx.updatedAt })
+    }
+    return c.json({ rates })
+  })
+
   // ==================== Per-account routes ====================
 
   // Reconnect

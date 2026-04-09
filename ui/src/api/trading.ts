@@ -18,6 +18,12 @@ export const tradingApi = {
     return fetchJson('/api/trading/equity')
   },
 
+  // ==================== FX rates ====================
+
+  async fxRates(): Promise<{ rates: Array<{ currency: string; rate: number; source: string; updatedAt: string }> }> {
+    return fetchJson('/api/trading/fx-rates')
+  },
+
   // ==================== Per-account ====================
 
   async reconnectAccount(accountId: string): Promise<ReconnectResult> {
