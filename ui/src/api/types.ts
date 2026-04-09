@@ -202,6 +202,7 @@ export interface TradingAccount {
 }
 
 export interface AccountInfo {
+  baseCurrency: string
   netLiquidation: number
   totalCashValue: number
   unrealizedPnL: number
@@ -224,6 +225,8 @@ export interface Position {
     multiplier?: number
     localSymbol?: string
   }
+  /** Currency denomination of all monetary fields. */
+  currency: string
   side: 'long' | 'short'
   quantity: string // Decimal serialized as string
   avgCost: number
@@ -354,6 +357,7 @@ export interface UTASnapshotSummary {
   timestamp: string
   trigger: string
   account: {
+    baseCurrency: string
     netLiquidation: string
     totalCashValue: string
     unrealizedPnL: string
@@ -364,6 +368,7 @@ export interface UTASnapshotSummary {
   }
   positions: Array<{
     aliceId: string
+    currency: string
     side: 'long' | 'short'
     quantity: string
     avgCost: string

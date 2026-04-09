@@ -406,7 +406,7 @@ async function main() {
   const ctx: EngineContext = {
     config, connectorCenter, agentCenter, eventLog, toolCallLog, heartbeat, cronEngine, toolCenter,
     bbEngine: getSDKExecutor(),
-    accountManager, snapshotService,
+    accountManager, fxService, snapshotService,
     reconnectConnectors,
   }
 
