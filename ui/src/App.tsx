@@ -3,7 +3,8 @@ import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { ChatPage } from './pages/ChatPage'
 import { PortfolioPage } from './pages/PortfolioPage'
-import { EventsPage } from './pages/EventsPage'
+import { SchedulerPage } from './pages/SchedulerPage'
+import { LogsPage } from './pages/LogsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { AIProviderPage } from './pages/AIProviderPage'
 import { MarketDataPage } from './pages/MarketDataPage'
@@ -11,12 +12,10 @@ import { NewsPage } from './pages/NewsPage'
 import { TradingPage } from './pages/TradingPage'
 import { ConnectorsPage } from './pages/ConnectorsPage'
 import { DevPage } from './pages/DevPage'
-import { HeartbeatPage } from './pages/HeartbeatPage'
 import { ToolsPage } from './pages/ToolsPage'
-import { AgentStatusPage } from './pages/AgentStatusPage'
 
 export type Page =
-  | 'chat' | 'portfolio' | 'events' | 'agent-status' | 'heartbeat' | 'market-data' | 'news' | 'connectors'
+  | 'chat' | 'portfolio' | 'scheduler' | 'logs' | 'market-data' | 'news' | 'connectors'
   | 'trading'
   | 'ai-provider' | 'settings' | 'tools' | 'dev'
 
@@ -24,9 +23,8 @@ export type Page =
 export const ROUTES: Record<Page, string> = {
   'chat': '/',
   'portfolio': '/portfolio',
-  'events': '/events',
-  'agent-status': '/agent-status',
-  'heartbeat': '/heartbeat',
+  'scheduler': '/scheduler',
+  'logs': '/logs',
   'market-data': '/market-data',
   'news': '/news',
   'connectors': '/connectors',
@@ -67,11 +65,14 @@ export function App() {
           <Routes>
             <Route path="/" element={<ChatPage onSSEStatus={setSseConnected} />} />
             <Route path="/portfolio" element={<PortfolioPage />} />
-            <Route path="/events" element={<EventsPage />} />
-            <Route path="/agent-status" element={<AgentStatusPage />} />
-            <Route path="/heartbeat" element={<HeartbeatPage />} />
+            <Route path="/scheduler" element={<SchedulerPage />} />
+            <Route path="/logs" element={<LogsPage />} />
             <Route path="/market-data" element={<MarketDataPage />} />
             <Route path="/news" element={<NewsPage />} />
+            {/* Redirects for old URLs */}
+            <Route path="/events" element={<Navigate to="/logs" replace />} />
+            <Route path="/heartbeat" element={<Navigate to="/scheduler" replace />} />
+            <Route path="/agent-status" element={<Navigate to="/logs" replace />} />
             <Route path="/data-sources" element={<Navigate to="/market-data" replace />} />
             <Route path="/connectors" element={<ConnectorsPage />} />
             <Route path="/tools" element={<ToolsPage />} />

@@ -1,7 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { api, type EventLogEntry, type CronJob, type CronSchedule } from '../api'
-import { useSSE } from '../hooks/useSSE'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { api, type AppConfig, type CronJob, type CronSchedule } from '../api'
 import { Toggle } from '../components/Toggle'
+import { SaveIndicator } from '../components/SaveIndicator'
+import { ConfigSection, Field, inputClass } from '../components/form'
+import { useAutoSave } from '../hooks/useAutoSave'
 import { PageHeader } from '../components/PageHeader'
 
 // ==================== Helpers ====================
@@ -30,231 +32,263 @@ function scheduleLabel(s: CronSchedule): string {
   }
 }
 
-// Map event types to color classes
-function eventTypeColor(type: string): string {
-  if (type.startsWith('heartbeat.')) return 'text-purple'
-  if (type.startsWith('cron.')) return 'text-accent'
-  if (type.startsWith('message.')) return 'text-green'
-  return 'text-text-muted'
-}
+// ==================== Heartbeat: Status Bar ====================
 
-// ==================== EventLog Section ====================
+function StatusBar() {
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  const [triggering, setTriggering] = useState(false)
+  const [feedback, setFeedback] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-const PAGE_SIZE = 100
-
-function EventLogSection() {
-  const [entries, setEntries] = useState<EventLogEntry[]>([])
-  const [typeFilter, setTypeFilter] = useState('')
-  const [paused, setPaused] = useState(false)
-  const [page, setPage] = useState(1)
-  const [totalPages, setTotalPages] = useState(1)
-  const [total, setTotal] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [types, setTypes] = useState<string[]>([])
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  // Fetch a page from disk
-  const fetchPage = useCallback(async (p: number, type?: string) => {
-    setLoading(true)
-    try {
-      const result = await api.events.query({
-        page: p,
-        pageSize: PAGE_SIZE,
-        type: type || undefined,
-      })
-      setEntries(result.entries)
-      setPage(result.page)
-      setTotalPages(result.totalPages)
-      setTotal(result.total)
-    } catch (err) {
-      console.warn('Failed to load events:', err)
-    } finally {
-      setLoading(false)
-    }
+  useEffect(() => {
+    api.heartbeat.status().then(({ enabled }) => setEnabled(enabled)).catch(console.warn)
   }, [])
 
-  // Initial load
-  useEffect(() => { fetchPage(1) }, [fetchPage])
-
-  // Track all seen event types (persists across page changes)
-  useEffect(() => {
-    if (entries.length > 0) {
-      setTypes((prev) => {
-        const next = new Set(prev)
-        for (const e of entries) next.add(e.type)
-        return [...next].sort()
-      })
+  const handleToggle = async (v: boolean) => {
+    try {
+      const result = await api.heartbeat.setEnabled(v)
+      setEnabled(result.enabled)
+    } catch {
+      setError('Failed to toggle heartbeat')
+      setTimeout(() => setError(null), 3000)
     }
-  }, [entries])
+  }
 
-  // SSE for real-time events — only affects page 1
-  useSSE({
-    url: '/api/events/stream',
-    onMessage: (entry: EventLogEntry) => {
-      // Always track new types
-      setTypes((prev) => {
-        if (prev.includes(entry.type)) return prev
-        return [...prev, entry.type].sort()
-      })
-      // Increment total
-      setTotal((prev) => prev + 1)
-      // Only prepend to visible list when on page 1 and matching filter
-      if (page === 1) {
-        const matchesFilter = !typeFilter || entry.type === typeFilter
-        if (matchesFilter) {
-          setEntries((prev) => [entry, ...prev].slice(0, PAGE_SIZE))
-        }
-      }
-    },
-    enabled: !paused,
-  })
-
-  // Type filter change → reset to page 1
-  const handleTypeChange = useCallback((type: string) => {
-    setTypeFilter(type)
-    fetchPage(1, type)
-  }, [fetchPage])
-
-  // Page navigation
-  const goToPage = useCallback((p: number) => {
-    fetchPage(p, typeFilter || undefined)
-    containerRef.current?.scrollTo(0, 0)
-  }, [fetchPage, typeFilter])
+  const handleTrigger = async () => {
+    setTriggering(true)
+    setFeedback(null)
+    try {
+      await api.heartbeat.trigger()
+      setFeedback('Heartbeat triggered!')
+      setTimeout(() => setFeedback(null), 3000)
+    } catch (err) {
+      setFeedback(err instanceof Error ? err.message : 'Trigger failed')
+      setTimeout(() => setFeedback(null), 5000)
+    } finally {
+      setTriggering(false)
+    }
+  }
 
   return (
-    <div className="flex flex-col gap-3 h-full">
-      {/* Controls */}
-      <div className="flex items-center gap-3 shrink-0">
-        <select
-          value={typeFilter}
-          onChange={(e) => handleTypeChange(e.target.value)}
-          className="bg-bg-tertiary text-text text-sm rounded-md border border-border px-2 py-1.5 outline-none focus:border-accent"
-        >
-          <option value="">All types</option>
-          {types.map((t) => (
-            <option key={t} value={t}>{t}</option>
-          ))}
-        </select>
-
-        <button
-          onClick={() => setPaused(!paused)}
-          className={`text-xs px-3 py-1.5 rounded-md border transition-colors ${
-            paused
-              ? 'border-notification-border text-notification-border hover:bg-notification-bg'
-              : 'border-border text-text-muted hover:bg-bg-tertiary'
-          }`}
-        >
-          {paused ? '▶ Resume' : '⏸ Pause'}
-        </button>
-
-        <span className="text-xs text-text-muted ml-auto">
-          {total > 0
-            ? `Page ${page} of ${totalPages} · ${total} events`
-            : '0 events'
-          }
-          {typeFilter && ' (filtered)'}
-        </span>
-      </div>
-
-      {/* Event list — fills remaining space */}
-      <div
-        ref={containerRef}
-        className="flex-1 min-h-0 bg-bg rounded-lg border border-border overflow-y-auto font-mono text-xs"
-      >
-        {loading && entries.length === 0 ? (
-          <div className="px-4 py-8 text-center text-text-muted">Loading...</div>
-        ) : entries.length === 0 ? (
-          <div className="px-4 py-8 text-center text-text-muted">No events yet</div>
-        ) : (
-          <table className="w-full">
-            <thead className="sticky top-0 bg-bg-secondary">
-              <tr className="text-text-muted text-left">
-                <th className="px-3 py-2 w-12">#</th>
-                <th className="px-3 py-2 w-36">Time</th>
-                <th className="px-3 py-2 w-40">Type</th>
-                <th className="px-3 py-2">Payload</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((entry) => (
-                <EventRow key={entry.seq} entry={entry} />
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      {/* Pagination controls */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 shrink-0">
-          <button
-            onClick={() => goToPage(1)}
-            disabled={page <= 1 || loading}
-            className="text-xs px-2 py-1 rounded border border-border text-text-muted hover:text-text hover:bg-bg-tertiary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            ««
-          </button>
-          <button
-            onClick={() => goToPage(page - 1)}
-            disabled={page <= 1 || loading}
-            className="text-xs px-2 py-1 rounded border border-border text-text-muted hover:text-text hover:bg-bg-tertiary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            «
-          </button>
-          <span className="text-xs text-text-muted px-2">
-            {page} / {totalPages}
-          </span>
-          <button
-            onClick={() => goToPage(page + 1)}
-            disabled={page >= totalPages || loading}
-            className="text-xs px-2 py-1 rounded border border-border text-text-muted hover:text-text hover:bg-bg-tertiary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            »
-          </button>
-          <button
-            onClick={() => goToPage(totalPages)}
-            disabled={page >= totalPages || loading}
-            className="text-xs px-2 py-1 rounded border border-border text-text-muted hover:text-text hover:bg-bg-tertiary transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            »»
-          </button>
+    <div className="bg-bg rounded-lg border border-border p-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-lg">💓</span>
+          <div>
+            <div className="text-sm font-medium text-text">Heartbeat</div>
+            <div className="text-xs text-text-muted">
+              Periodic self-check and autonomous thinking
+            </div>
+          </div>
         </div>
-      )}
+
+        <div className="flex items-center gap-3">
+          {feedback && (
+            <span className={`text-xs ${feedback.includes('failed') || feedback.includes('not found') ? 'text-red' : 'text-green'}`}>
+              {feedback}
+            </span>
+          )}
+
+          {error && <span className="text-xs text-red">{error}</span>}
+
+          <button
+            onClick={handleTrigger}
+            disabled={triggering}
+            className="btn-secondary-sm"
+          >
+            {triggering ? 'Triggering...' : 'Trigger Now'}
+          </button>
+
+          {enabled !== null && (
+            <Toggle checked={enabled} onChange={handleToggle} />
+          )}
+        </div>
+      </div>
     </div>
   )
 }
 
-function EventRow({ entry }: { entry: EventLogEntry }) {
-  const [expanded, setExpanded] = useState(false)
-  const payloadStr = JSON.stringify(entry.payload)
-  const isLong = payloadStr.length > 120
+// ==================== Heartbeat: Config Form ====================
+
+function HeartbeatConfigForm({ config }: { config: AppConfig }) {
+  const [every, setEvery] = useState(config.heartbeat?.every || '30m')
+  const [ahEnabled, setAhEnabled] = useState(config.heartbeat?.activeHours != null)
+  const [ahStart, setAhStart] = useState(config.heartbeat?.activeHours?.start || '09:00')
+  const [ahEnd, setAhEnd] = useState(config.heartbeat?.activeHours?.end || '22:00')
+  const [ahTimezone, setAhTimezone] = useState(config.heartbeat?.activeHours?.timezone || 'local')
+
+  const configData = useMemo(() => ({
+    ...config.heartbeat,
+    every,
+    activeHours: ahEnabled ? { start: ahStart, end: ahEnd, timezone: ahTimezone } : null,
+  }), [config.heartbeat, every, ahEnabled, ahStart, ahEnd, ahTimezone])
+
+  const save = useCallback(async (d: Record<string, unknown>) => {
+    await api.config.updateSection('heartbeat', d)
+  }, [])
+
+  const { status, retry } = useAutoSave({ data: configData, save })
 
   return (
-    <>
-      <tr
-        className="border-t border-border/50 hover:bg-bg-tertiary/30 transition-colors cursor-pointer"
-        onClick={() => isLong && setExpanded(!expanded)}
-      >
-        <td className="px-3 py-1.5 text-text-muted">{entry.seq}</td>
-        <td className="px-3 py-1.5 text-text-muted whitespace-nowrap">{formatDateTime(entry.ts)}</td>
-        <td className={`px-3 py-1.5 ${eventTypeColor(entry.type)}`}>{entry.type}</td>
-        <td className="px-3 py-1.5 text-text-muted truncate">
-          {isLong ? payloadStr.slice(0, 120) + '...' : payloadStr}
-          {isLong && (
-            <span className="ml-1 text-accent">{expanded ? '▾' : '▸'}</span>
-          )}
-        </td>
-      </tr>
-      {expanded && (
-        <tr className="border-t border-border/30">
-          <td colSpan={4} className="px-3 py-2">
-            <pre className="text-text-muted whitespace-pre-wrap break-all bg-bg-tertiary rounded p-2 text-[11px]">
-              {JSON.stringify(entry.payload, null, 2)}
-            </pre>
-          </td>
-        </tr>
+    <ConfigSection title="Configuration" description="Set how often the heartbeat runs and optionally restrict it to active hours.">
+      <Field label="Interval">
+        <input
+          className={inputClass}
+          value={every}
+          onChange={(e) => setEvery(e.target.value)}
+          placeholder="30m"
+        />
+      </Field>
+
+      <div className="mb-3">
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-[13px] text-text font-medium">Active Hours</label>
+          <Toggle checked={ahEnabled} onChange={setAhEnabled} />
+        </div>
+        {ahEnabled && (
+          <div className="flex gap-2 items-end">
+            <div className="flex-1">
+              <label className="block text-[11px] text-text-muted mb-1">Start</label>
+              <input
+                className={inputClass}
+                value={ahStart}
+                onChange={(e) => setAhStart(e.target.value)}
+                placeholder="09:00"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-[11px] text-text-muted mb-1">End</label>
+              <input
+                className={inputClass}
+                value={ahEnd}
+                onChange={(e) => setAhEnd(e.target.value)}
+                placeholder="22:00"
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-[11px] text-text-muted mb-1">Timezone</label>
+              <select
+                className={inputClass}
+                value={ahTimezone}
+                onChange={(e) => setAhTimezone(e.target.value)}
+              >
+                <option value="local">Local</option>
+                <option value="UTC">UTC</option>
+                <option value="America/New_York">US Eastern</option>
+                <option value="America/Chicago">US Central</option>
+                <option value="America/Los_Angeles">US Pacific</option>
+                <option value="Europe/London">London</option>
+                <option value="Europe/Berlin">Berlin</option>
+                <option value="Asia/Tokyo">Tokyo</option>
+                <option value="Asia/Shanghai">Shanghai</option>
+                <option value="Asia/Hong_Kong">Hong Kong</option>
+                <option value="Asia/Singapore">Singapore</option>
+              </select>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <SaveIndicator status={status} onRetry={retry} />
+    </ConfigSection>
+  )
+}
+
+// ==================== Heartbeat: Prompt Editor ====================
+
+function PromptEditor() {
+  const [content, setContent] = useState('')
+  const [filePath, setFilePath] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [dirty, setDirty] = useState(false)
+
+  useEffect(() => {
+    api.heartbeat.getPromptFile()
+      .then(({ content, path }) => {
+        setContent(content)
+        setFilePath(path)
+      })
+      .catch(() => setError('Failed to load prompt file'))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError(null)
+    setSaved(false)
+    try {
+      await api.heartbeat.updatePromptFile(content)
+      setDirty(false)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch {
+      setError('Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <ConfigSection title="Prompt File" description={filePath || 'The prompt template used for each heartbeat cycle.'}>
+      {loading ? (
+        <div className="text-sm text-text-muted">Loading...</div>
+      ) : (
+        <>
+          <textarea
+            className={`${inputClass} min-h-[200px] max-h-[400px] resize-y font-mono text-xs leading-relaxed`}
+            value={content}
+            onChange={(e) => { setContent(e.target.value); setDirty(true) }}
+          />
+          <div className="flex items-center gap-2 mt-2">
+            <button
+              onClick={handleSave}
+              disabled={saving || !dirty}
+              className="btn-primary-sm"
+            >
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+            {saved && (
+              <span className="inline-flex items-center gap-1.5 text-[11px]">
+                <span className="w-1.5 h-1.5 rounded-full bg-green" />
+                <span className="text-text-muted">Saved</span>
+              </span>
+            )}
+            {error && (
+              <span className="inline-flex items-center gap-1.5 text-[11px]">
+                <span className="w-1.5 h-1.5 rounded-full bg-red" />
+                <span className="text-red">{error}</span>
+              </span>
+            )}
+            {dirty && !saved && !error && (
+              <span className="text-[11px] text-text-muted">Unsaved changes</span>
+            )}
+          </div>
+        </>
       )}
-    </>
+    </ConfigSection>
+  )
+}
+
+// ==================== Heartbeat Tab ====================
+
+function HeartbeatSection() {
+  const [config, setConfig] = useState<AppConfig | null>(null)
+
+  useEffect(() => {
+    api.config.load().then(setConfig).catch(console.warn)
+  }, [])
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      <div className="max-w-[880px] mx-auto space-y-6">
+        <StatusBar />
+        {config && <HeartbeatConfigForm config={config} />}
+        <PromptEditor />
+      </div>
+    </div>
   )
 }
 
@@ -546,28 +580,29 @@ function AddCronJobForm({ onClose, onCreated }: { onClose: () => void; onCreated
   )
 }
 
-// ==================== Main Page ====================
+// ==================== Page ====================
 
-type Tab = 'events' | 'cron'
+type Tab = 'heartbeat' | 'cron'
 
-export function EventsPage() {
-  const [tab, setTab] = useState<Tab>('events')
+export function SchedulerPage() {
+  const [tab, setTab] = useState<Tab>('heartbeat')
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
       <PageHeader
-        title="Events"
+        title="Scheduler"
+        description="Event-driven dispatch bus — heartbeat and cron jobs."
         right={
           <div className="flex gap-1 bg-bg-secondary rounded-lg p-1">
             <button
-              onClick={() => setTab('events')}
+              onClick={() => setTab('heartbeat')}
               className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
-                tab === 'events'
+                tab === 'heartbeat'
                   ? 'bg-bg-tertiary text-text'
                   : 'text-text-muted hover:text-text'
               }`}
             >
-              Event Log
+              Heartbeat
             </button>
             <button
               onClick={() => setTab('cron')}
@@ -583,10 +618,9 @@ export function EventsPage() {
         }
       />
 
-      {/* Content area */}
       <div className="flex-1 flex flex-col min-h-0 px-4 md:px-6 py-5">
         <div className="flex-1 min-h-0">
-          {tab === 'events' ? <EventLogSection /> : <CronSection />}
+          {tab === 'heartbeat' ? <HeartbeatSection /> : <CronSection />}
         </div>
       </div>
     </div>
