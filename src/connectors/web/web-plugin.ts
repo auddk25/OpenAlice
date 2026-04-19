@@ -4,6 +4,7 @@ import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { resolve } from 'node:path'
 import type { Plugin, EngineContext } from '../../core/types.js'
+import type { ProducerHandle } from '../../core/producer.js'
 import { SessionStore } from '../../core/session.js'
 import { WebConnector } from './web-connector.js'
 import { readWebSubchannels } from '../../core/config.js'
@@ -33,6 +34,7 @@ export class WebPlugin implements Plugin {
   /** SSE clients grouped by channel ID. Default channel: 'default'. */
   private sseByChannel = new Map<string, Map<string, SSEClient>>()
   private unregisterConnector?: () => void
+  private chatProducer?: ProducerHandle<readonly ['message.received', 'message.sent']>
 
   constructor(private config: WebConfig) {}
 
@@ -71,8 +73,14 @@ export class WebPlugin implements Plugin {
 
     app.use('/api/*', cors())
 
+    // ==================== Producer: web chat emits message.received/sent ====================
+    this.chatProducer = ctx.listenerRegistry.declareProducer({
+      name: 'web-chat',
+      emits: ['message.received', 'message.sent'] as const,
+    })
+
     // ==================== Mount route modules ====================
-    app.route('/api/chat', createChatRoutes({ ctx, sessions, sseByChannel: this.sseByChannel }))
+    app.route('/api/chat', createChatRoutes({ ctx, sessions, sseByChannel: this.sseByChannel, producer: this.chatProducer }))
     app.route('/api/channels', createChannelsRoutes({ sessions, sseByChannel: this.sseByChannel }))
     app.route('/api/media', createMediaRoutes())
     app.route('/api/config', createConfigRoutes({
@@ -113,6 +121,8 @@ export class WebPlugin implements Plugin {
   async stop() {
     this.sseByChannel.clear()
     this.unregisterConnector?.()
+    this.chatProducer?.dispose()
+    this.chatProducer = undefined
     this.server?.close()
   }
 }

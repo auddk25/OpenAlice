@@ -142,8 +142,15 @@ export interface TopologyListener {
   emitsWildcard: boolean
 }
 
+export interface TopologyProducer {
+  name: string
+  emits: string[]
+  emitsWildcard: boolean
+}
+
 export interface TopologyResponse {
   eventTypes: TopologyEventType[]
+  producers: TopologyProducer[]
   listeners: TopologyListener[]
 }
 
@@ -154,6 +161,8 @@ export interface NewsCollectorFeed {
   url: string
   source: string
   categories?: string[]
+  description?: string
+  enabled?: boolean
 }
 
 export interface NewsCollectorConfig {

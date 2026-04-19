@@ -79,6 +79,11 @@ async function main() {
   const eventLog = await createEventLog()
   const toolCallLog = await createToolCallLog()
 
+  // ==================== Listener Registry ====================
+  // Created early so CronEngine and other producers can declare against it.
+
+  const listenerRegistry = createListenerRegistry(eventLog)
+
   // ==================== Tool Center (created early — AccountManager needs it) ====================
 
   const toolCenter = new ToolCenter()
@@ -147,7 +152,7 @@ async function main() {
 
   // ==================== Cron ====================
 
-  const cronEngine = createCronEngine({ eventLog })
+  const cronEngine = createCronEngine({ registry: listenerRegistry })
 
   // ==================== News Collector Store ====================
 
@@ -249,10 +254,6 @@ async function main() {
     toolCallLog,
   })
 
-  // ==================== Listener Registry ====================
-
-  const listenerRegistry = createListenerRegistry(eventLog)
-
   // ==================== Connector Center ====================
 
   const connectorCenter = new ConnectorCenter({ eventLog, listenerRegistry })
@@ -308,7 +309,8 @@ async function main() {
       intervalMs: config.news.intervalMinutes * 60 * 1000,
     })
     newsCollector.start()
-    console.log(`news-collector: started (${config.news.feeds.length} feeds, every ${config.news.intervalMinutes}m)`)
+    const activeCount = config.news.feeds.filter((f) => f.enabled !== false).length
+    console.log(`news-collector: started (${activeCount}/${config.news.feeds.length} feeds active, every ${config.news.intervalMinutes}m)`)
   }
 
   // ==================== Plugins ====================

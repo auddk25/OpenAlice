@@ -7,10 +7,10 @@ import { AgentEvents } from '../../../core/agent-event.js'
  * Topology routes: GET /
  *
  * Returns the static shape of the agent's event-driven nervous system:
- * every known event type (with `external` + optional `description`) and
- * every registered listener (with its subscribes set, declared emits,
- * and wildcard flags). The frontend uses this to render a DAG of Alice's
- * async lifecycle.
+ * every known event type (with `external` + optional `description`), every
+ * declared producer (pure event source — no subscribes), and every registered
+ * listener (with its subscribes set, declared emits, and wildcard flags).
+ * The frontend uses this to render a DAG of Alice's async lifecycle.
  */
 export function createTopologyRoutes(ctx: EngineContext) {
   const app = new Hono()
@@ -30,7 +30,12 @@ export function createTopologyRoutes(ctx: EngineContext) {
       subscribesWildcard: l.subscribesWildcard,
       emitsWildcard: l.emitsWildcard,
     }))
-    return c.json({ eventTypes, listeners })
+    const producers = ctx.listenerRegistry.listProducers().map((p) => ({
+      name: p.name,
+      emits: [...p.emits],
+      emitsWildcard: p.emitsWildcard,
+    }))
+    return c.json({ eventTypes, producers, listeners })
   })
 
   return app

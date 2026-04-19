@@ -24,6 +24,11 @@ import type {
   Listener,
   ListenerContext,
 } from './listener.js'
+import type {
+  ProducerDecl,
+  ProducerHandle,
+  ProducerInfo,
+} from './producer.js'
 
 // ==================== Types ====================
 
@@ -38,19 +43,27 @@ export interface ListenerInfo {
 }
 
 export interface ListenerRegistry {
-  /** Register a listener. Throws if the name is already taken. */
+  /** Register a listener. Throws if the name collides with any listener or producer. */
   register<
     Sub extends EventTypeSet,
     Emit extends EventTypeSet | undefined,
   >(listener: Listener<Sub, Emit>): void
   /** Unregister a listener by name. Unsubscribes it if the registry is started. No-op if not found. */
   unregister(name: string): void
+  /** Declare a producer (pure event source). Throws on name collision with any
+   *  listener or existing producer. Returns a constrained, validated emit handle.
+   *  The producer is visible in introspection immediately. */
+  declareProducer<Emit extends EventTypeSet>(
+    decl: ProducerDecl<Emit>,
+  ): ProducerHandle<Emit>
   /** Activate all registered listeners (subscribe to EventLog). */
   start(): Promise<void>
-  /** Deactivate all listeners (unsubscribe). */
+  /** Deactivate all listeners (unsubscribe). Does not remove declarations. */
   stop(): Promise<void>
   /** Introspection — registered listener names, subscribes, emits. */
   list(): ReadonlyArray<ListenerInfo>
+  /** Introspection — declared producer names + emit sets. */
+  listProducers(): ReadonlyArray<ProducerInfo>
 }
 
 // ==================== Helpers ====================
@@ -76,15 +89,34 @@ export function createListenerRegistry(eventLog: EventLog): ListenerRegistry {
   const listeners = new Map<string, AnyListener>()
   // Per listener we may have 1..N subscriptions (multi-sub / wildcard)
   const unsubscribes = new Map<string, Array<() => void>>()
+  // Producers share the same name space as listeners — a name cannot be both.
+  type InternalProducerDecl = {
+    name: string
+    emits: EventTypeSet
+    emitsWildcard: boolean
+    emitsNormalized: ReadonlyArray<keyof AgentEventMap>
+  }
+  const producers = new Map<string, InternalProducerDecl>()
   let started = false
+
+  function assertNameFree(name: string, kind: 'listener' | 'producer'): void {
+    if (listeners.has(name)) {
+      throw new Error(
+        `ListenerRegistry: ${kind} "${name}" already registered as a listener`,
+      )
+    }
+    if (producers.has(name)) {
+      throw new Error(
+        `ListenerRegistry: ${kind} "${name}" already registered as a producer`,
+      )
+    }
+  }
 
   function register<
     Sub extends EventTypeSet,
     Emit extends EventTypeSet | undefined,
   >(listener: Listener<Sub, Emit>): void {
-    if (listeners.has(listener.name)) {
-      throw new Error(`ListenerRegistry: listener "${listener.name}" already registered`)
-    }
+    assertNameFree(listener.name, 'listener')
     listeners.set(listener.name, listener as unknown as AnyListener)
     if (started) {
       subscribeOne(listener as unknown as AnyListener)
@@ -191,6 +223,54 @@ export function createListenerRegistry(eventLog: EventLog): ListenerRegistry {
     }
   }
 
+  function declareProducer<Emit extends EventTypeSet>(
+    decl: ProducerDecl<Emit>,
+  ): ProducerHandle<Emit> {
+    assertNameFree(decl.name, 'producer')
+    const emitsWildcard = decl.emits === '*'
+    const emitsNormalized = normalizeToArray(decl.emits as EventTypeSet)
+    const emitAllowed = emitsWildcard ? null : new Set<string>(emitsNormalized)
+
+    const emitFn = async (type: string, payload: unknown, opts?: AppendOpts) => {
+      if (emitsWildcard) {
+        if (!(type in AgentEventSchemas)) {
+          throw new Error(
+            `Producer '${decl.name}' tried to emit unregistered type '${type}'`,
+          )
+        }
+      } else {
+        if (!emitAllowed!.has(type)) {
+          const declared = [...emitAllowed!].join(', ') || '(none)'
+          throw new Error(
+            `Producer '${decl.name}' tried to emit '${type}' but declared emits: ${declared}`,
+          )
+        }
+      }
+      return eventLog.append(
+        type as keyof AgentEventMap,
+        payload as never,
+        opts,
+      )
+    }
+
+    producers.set(decl.name, {
+      name: decl.name,
+      emits: decl.emits,
+      emitsWildcard,
+      emitsNormalized,
+    })
+
+    const handle: ProducerHandle<Emit> = {
+      name: decl.name,
+      emits: emitsNormalized,
+      emit: emitFn as never,
+      dispose() {
+        producers.delete(decl.name)
+      },
+    }
+    return handle
+  }
+
   async function start(): Promise<void> {
     if (started) return
     started = true
@@ -220,5 +300,13 @@ export function createListenerRegistry(eventLog: EventLog): ListenerRegistry {
     }))
   }
 
-  return { register, unregister, start, stop, list }
+  function listProducers(): ReadonlyArray<ProducerInfo> {
+    return Array.from(producers.values()).map((p) => ({
+      name: p.name,
+      emits: [...p.emitsNormalized],
+      emitsWildcard: p.emitsWildcard,
+    }))
+  }
+
+  return { register, unregister, declareProducer, start, stop, list, listProducers }
 }

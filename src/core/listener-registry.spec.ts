@@ -514,4 +514,117 @@ describe('ListenerRegistry', () => {
       }
     })
   })
+
+  // ==================== declareProducer ====================
+
+  describe('declareProducer', () => {
+    it('declares a producer and lists it', () => {
+      const handle = registry.declareProducer({
+        name: 'cron-engine',
+        emits: ['cron.fire'] as const,
+      })
+      expect(handle.name).toBe('cron-engine')
+      expect([...handle.emits]).toEqual(['cron.fire'])
+
+      const producers = registry.listProducers()
+      expect(producers).toHaveLength(1)
+      expect(producers[0]).toEqual({
+        name: 'cron-engine',
+        emits: ['cron.fire'],
+        emitsWildcard: false,
+      })
+    })
+
+    it('producer emit writes through to the event log', async () => {
+      const handle = registry.declareProducer({
+        name: 'cron-engine',
+        emits: ['cron.fire'] as const,
+      })
+      const entry = await handle.emit('cron.fire', { jobId: 'j1', jobName: 'x', payload: 'p' })
+      expect(entry.type).toBe('cron.fire')
+      expect(entry.seq).toBeGreaterThan(0)
+    })
+
+    it('rejects emit for undeclared types at runtime', async () => {
+      const handle = registry.declareProducer({
+        name: 'cron-engine',
+        emits: ['cron.fire'] as const,
+      })
+      await expect(
+        (handle.emit as unknown as (t: string, p: unknown) => Promise<unknown>)(
+          'heartbeat.done',
+          { jobId: 'j', durationMs: 1 },
+        ),
+      ).rejects.toThrow(/cron-engine.*declared emits/)
+    })
+
+    it('wildcard producer accepts any registered type but rejects unregistered', async () => {
+      const handle = registry.declareProducer({
+        name: 'universal',
+        emits: '*',
+      })
+      await (handle.emit as unknown as (t: string, p: unknown) => Promise<unknown>)(
+        'cron.fire',
+        { jobId: 'j', jobName: 'x', payload: 'p' },
+      )
+      await expect(
+        (handle.emit as unknown as (t: string, p: unknown) => Promise<unknown>)(
+          'not.a.real.event',
+          { foo: 'bar' },
+        ),
+      ).rejects.toThrow(/universal.*unregistered type/)
+    })
+
+    it('throws on name collision with a listener', () => {
+      registry.register({
+        name: 'conflict',
+        subscribes: 'cron.fire',
+        async handle() { /* no-op */ },
+      })
+      expect(() =>
+        registry.declareProducer({ name: 'conflict', emits: ['cron.fire'] as const }),
+      ).toThrow(/already registered as a listener/)
+    })
+
+    it('throws on name collision with another producer', () => {
+      registry.declareProducer({ name: 'p1', emits: ['cron.fire'] as const })
+      expect(() =>
+        registry.declareProducer({ name: 'p1', emits: ['cron.fire'] as const }),
+      ).toThrow(/already registered as a producer/)
+    })
+
+    it('register() throws if name already taken by a producer', () => {
+      registry.declareProducer({ name: 'cron-engine', emits: ['cron.fire'] as const })
+      expect(() =>
+        registry.register({
+          name: 'cron-engine',
+          subscribes: 'cron.fire',
+          async handle() { /* no-op */ },
+        }),
+      ).toThrow(/already registered as a producer/)
+    })
+
+    it('dispose() removes the producer and frees the name', () => {
+      const handle = registry.declareProducer({
+        name: 'cron-engine',
+        emits: ['cron.fire'] as const,
+      })
+      expect(registry.listProducers()).toHaveLength(1)
+      handle.dispose()
+      expect(registry.listProducers()).toHaveLength(0)
+
+      // Name is free again — can re-declare (or register as listener)
+      registry.declareProducer({ name: 'cron-engine', emits: ['cron.fire'] as const })
+      expect(registry.listProducers()).toHaveLength(1)
+    })
+
+    it('producer emit does not auto-fill causedBy', async () => {
+      const handle = registry.declareProducer({
+        name: 'cron-engine',
+        emits: ['cron.fire'] as const,
+      })
+      const entry = await handle.emit('cron.fire', { jobId: 'j', jobName: 'x', payload: 'p' })
+      expect(entry.causedBy).toBeUndefined()
+    })
+  })
 })
