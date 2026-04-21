@@ -34,6 +34,27 @@ the item when done — git log is the history.
       event type. When more external types exist, let tokens declare
       which event types they're allowed to inject.
 
+## Architecture
+
+- [ ] Unified config hot-reload. Right now every consumer of a config
+      section has to solve "did the user edit this?" on its own —
+      Telegram/MCP-Ask via `reconnectConnectors`, opentypebb via lazy
+      getters closing over `ctx.config` plus an `Object.assign` patch
+      in the config PUT route, and anything holding a sub-reference
+      (`const providers = ctx.config.marketData.providers` style) just
+      goes stale. That's three different strategies living in one
+      codebase, and the last patch (opentypebb lazy getters + ctx.config
+      assign) is a band-aid that only works because `ctx.config`'s
+      top-level object identity is preserved. What's missing: a single
+      subscribe/publish surface over config sections (`configBus.on(
+      'marketData', handler)` / `get('marketData')`) that writers hit
+      once and consumers subscribe to, plus a file-watcher for the
+      direct-edit case (people editing `data/config/*.json` in their
+      editor bypass the PUT route entirely and still see stale behavior).
+      Two-month-old config layer has been getting patched incrementally;
+      worth doing one focused pass instead of another band-aid next time
+      something goes stale.
+
 ## Bugs
 
 - [ ] Snapshot / FX: after currency conversion, snapshot values

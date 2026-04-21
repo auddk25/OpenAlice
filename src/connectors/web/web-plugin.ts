@@ -121,8 +121,11 @@ export class WebPlugin implements Plugin {
     // merged into this app so UI and external consumers hit a single port.
     mountOpenTypeBB(app, ctx.bbEngine, {
       basePath: '/api/market-data-v1',
-      defaultCredentials: buildSDKCredentials(ctx.config.marketData.providerKeys),
-      defaultProviders: ctx.config.marketData.providers,
+      // Read config lazily so UI edits to marketData.providerKeys /
+      // marketData.providers take effect on the next request — no remount
+      // needed. Requires the config-write route to refresh ctx.config.
+      defaultCredentials: () => buildSDKCredentials(ctx.config.marketData.providerKeys),
+      defaultProviders: () => ctx.config.marketData.providers,
     })
 
     // ==================== Serve UI (Vite build output) ====================
