@@ -34,6 +34,7 @@ import {
   marketToContract,
   contractToCcxt,
 } from './ccxt-contracts.js'
+import { fuzzyRankContracts } from '../fuzzy-rank.js'
 import {
   type CcxtExchangeOverrides,
   exchangeOverrides,
@@ -253,32 +254,46 @@ export class CcxtBroker implements IBroker<CcxtBrokerMeta> {
     // CCXT exchanges typically don't need explicit closing
   }
 
+  /**
+   * Re-pull the exchange market list. CCXT's `loadMarkets(true)` (the
+   * `reload=true` overload) bypasses the cached snapshot it built during
+   * init. Call from a cron periodically — newly listed pairs and
+   * delistings come along for the ride.
+   */
+  async refreshCatalog(): Promise<void> {
+    this.ensureInit()
+    await this.exchange.loadMarkets(true)
+    const marketCount = Object.keys(this.exchange.markets).length
+    console.log(`CcxtBroker[${this.id}]: catalog refreshed (${marketCount} markets)`)
+  }
+
   // ---- Contract search ----
 
   async searchContracts(pattern: string): Promise<ContractDescription[]> {
     this.ensureInit()
     if (!pattern) return []
 
-    const searchBase = pattern.toUpperCase()
-    const matchedMarkets: CcxtMarket[] = []
-
+    // Eligible candidate set: active markets with both legs of the pair, and
+    // quoted in a stablecoin / USD. This is the same filter the strict
+    // implementation used; we keep it so a "tesla" fuzzy hit doesn't drag in
+    // exotic-quote pairs the user almost certainly doesn't want.
+    const candidates: CcxtMarket[] = []
     for (const market of Object.values(this.markets)) {
       if (market.active === false) continue
-      // Some exchanges (e.g. hyperliquid spot) have markets without base/quote populated
       if (!market.base || !market.quote) continue
-      if (market.base.toUpperCase() !== searchBase) continue
-
       const quote = market.quote.toUpperCase()
       if (quote !== 'USDT' && quote !== 'USD' && quote !== 'USDC') continue
-
-      matchedMarkets.push(market)
+      candidates.push(market)
     }
 
-    // Sort: derivatives first (more common for trading), then stablecoin preference
+    // Pre-sort candidates by the broker's own preference (swap > future >
+    // spot > option, USDT > USD > USDC). fuzzyRankContracts is a stable sort
+    // and uses the input order as a tiebreaker, so this carries through —
+    // exact base matches keep showing up in the familiar derivative-first
+    // order, fuzzy hits inherit the same preference.
     const typeOrder: Record<string, number> = { swap: 0, future: 1, spot: 2, option: 3 }
     const quoteOrder: Record<string, number> = { USDT: 0, USD: 1, USDC: 2 }
-
-    matchedMarkets.sort((a, b) => {
+    candidates.sort((a, b) => {
       const aType = typeOrder[a.type as keyof typeof typeOrder] ?? 99
       const bType = typeOrder[b.type as keyof typeof typeOrder] ?? 99
       if (aType !== bType) return aType - bType
@@ -287,22 +302,37 @@ export class CcxtBroker implements IBroker<CcxtBrokerMeta> {
       return aQuote - bQuote
     })
 
-    // Collect derivative types available for this base asset
+    // Run candidates through the shared fuzzy ranker. Exact-base hits land in
+    // tier 100 (preserves the strict-matcher's behaviour for power users who
+    // type "BTC" and expect every BTC market); substring / name hits show up
+    // afterward so partial keywords (e.g. "tesl", "popcorn") still surface
+    // something useful.
+    const ranked = fuzzyRankContracts(
+      candidates.map((m) => {
+        const c = marketToContract(m, this.exchangeName)
+        return { contract: c, base: m.base, quote: m.quote, name: m.id ?? m.symbol }
+      }),
+      pattern,
+    )
+
+    // Index original markets by symbol so we can look up derivative-type
+    // metadata from each ranked hit.
+    const marketBySymbol = new Map<string, CcxtMarket>()
+    for (const m of candidates) marketBySymbol.set(m.symbol, m)
+
+    // derivativeSecTypes — surface what derivative product types appear in
+    // the result set, same shape as before.
     const derivativeTypes = new Set<string>()
-    for (const m of matchedMarkets) {
+    for (const desc of ranked) {
+      const m = marketBySymbol.get(desc.contract.localSymbol ?? '')
+      if (!m) continue
       if (m.type === 'future') derivativeTypes.add('FUT')
       if (m.type === 'option') derivativeTypes.add('OPT')
     }
-    const derivativeSecTypes: string[] | undefined = derivativeTypes.size > 0
-      ? Array.from(derivativeTypes)
-      : undefined
+    const derivativeSecTypes: string[] = derivativeTypes.size > 0 ? Array.from(derivativeTypes) : []
+    for (const desc of ranked) desc.derivativeSecTypes = derivativeSecTypes
 
-    return matchedMarkets.map(market => {
-      const desc = new ContractDescription()
-      desc.contract = marketToContract(market, this.exchangeName)
-      desc.derivativeSecTypes = derivativeSecTypes ?? []
-      return desc
-    })
+    return ranked
   }
 
   async getContractDetails(query: Contract): Promise<ContractDetails | null> {
